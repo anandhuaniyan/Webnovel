@@ -92,6 +92,9 @@ $expectedValues = @{
     WEBNOVEL_POSTGRES_USER = 'webnovel_app'
     WEBNOVEL_DOCKER_NETWORK = 'webnovel_network'
     WEBNOVEL_FRONTEND_CONTAINER = 'webnovel_frontend'
+    WEBNOVEL_BACKEND_CONTAINER = 'webnovel_backend'
+    WEBNOVEL_WORKER_CONTAINER = 'webnovel_worker'
+    WEBNOVEL_SCHEDULER_CONTAINER = 'webnovel_scheduler'
     WEBNOVEL_POSTGRES_CONTAINER = 'webnovel_postgres'
     WEBNOVEL_REDIS_CONTAINER = 'webnovel_redis'
     WEBNOVEL_STORAGE_CONTAINER = 'webnovel_storage'
@@ -201,7 +204,8 @@ if (Test-Path -LiteralPath $ComposePath -PathType Leaf) {
     $composeText = [System.IO.File]::ReadAllText($ComposePath)
     foreach ($requiredResource in @(
         'webnovel_network', 'webnovel_postgres_data', 'webnovel_redis_data',
-        'webnovel_storage_data', 'webnovel_frontend', 'webnovel_postgres', 'webnovel_redis', 'webnovel_storage'
+        'webnovel_storage_data', 'webnovel_frontend', 'webnovel_backend', 'webnovel_worker',
+        'webnovel_scheduler', 'webnovel_postgres', 'webnovel_redis', 'webnovel_storage'
     )) {
         if (-not $composeText.Contains($requiredResource)) {
             Add-Failure "Compose configuration is missing dedicated resource '$requiredResource'."

@@ -17,6 +17,7 @@ data/processed-books/*
 data/rights-evidence/*
 data/imports/*
 data/exports/*
+data/celerybeat-schedule*
 storage/covers/*
 storage/chapter-images/*
 storage/temporary/*

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "default_jurisdiction": "SG",
+  "worldwide_visitors": true,
+  "automatic_public_domain_approval": false,
+  "manual_legal_review_required": true,
+  "require_independent_evidence": true,
+  "require_edition_and_translation_review": true,
+  "approved_statuses": [
+    "PUBLIC_DOMAIN_VERIFIED",
+    "LICENSE_VERIFIED",
+    "CC0_VERIFIED",
+    "CC_BY_VERIFIED",
+    "CC_BY_SA_VERIFIED",
+    "PERMISSION_VERIFIED"
+  ],
+  "default_review_interval_days": 365,
+  "notes": "Rules are deliberately fail-closed. Source availability or a US public-domain label never grants publication approval automatically."
+}

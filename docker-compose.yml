@@ -8,11 +8,128 @@ services:
     image: webnovel_frontend:local
     container_name: ${WEBNOVEL_FRONTEND_CONTAINER:-webnovel_frontend}
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
     ports:
       - "${WEBNOVEL_FRONTEND_HOST:-127.0.0.1}:${WEBNOVEL_FRONTEND_PORT:?WEBNOVEL_FRONTEND_PORT is required}:80"
     labels:
       com.webnovel.project: webnovel_platform
       com.webnovel.component: frontend
+    networks:
+      - webnovel_network
+    volumes:
+      - ./storage/covers:/usr/share/nginx/html/media/covers:ro
+      - ./storage/chapter-images:/usr/share/nginx/html/media/chapter-images:ro
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: webnovel_backend:local
+    container_name: ${WEBNOVEL_BACKEND_CONTAINER:-webnovel_backend}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WEBNOVEL_PROJECT_ROOT: /project
+      WEBNOVEL_DATA_PATH: /project/data
+      WEBNOVEL_STORAGE_PATH: /project/storage
+      WEBNOVEL_LOGS_PATH: /project/logs
+      WEBNOVEL_BACKUPS_PATH: /project/backups
+      WEBNOVEL_DATABASE_URL: postgresql+psycopg://${WEBNOVEL_POSTGRES_USER}:${WEBNOVEL_POSTGRES_PASSWORD}@postgres:5432/${WEBNOVEL_POSTGRES_DB}
+      WEBNOVEL_REDIS_URL: redis://:${WEBNOVEL_REDIS_PASSWORD}@redis:6379/0
+      WEBNOVEL_RIGHTS_RULES_PATH: /app/app/config/rights_rules.json
+      WEBNOVEL_FRONTEND_URL: ${WEBNOVEL_FRONTEND_URL}
+      WEBNOVEL_BACKEND_URL: ${WEBNOVEL_BACKEND_URL}
+    ports:
+      - "${WEBNOVEL_BACKEND_HOST:-127.0.0.1}:${WEBNOVEL_BACKEND_PORT:?WEBNOVEL_BACKEND_PORT is required}:8270"
+    volumes:
+      - ./data:/project/data
+      - ./storage:/project/storage
+      - ./database:/project/database
+      - ./logs:/project/logs
+      - ./backups:/project/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: backend
+    networks:
+      - webnovel_network
+
+  worker:
+    image: webnovel_backend:local
+    container_name: ${WEBNOVEL_WORKER_CONTAINER:-webnovel_worker}
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=webnovel-worker@%h"]
+    env_file:
+      - .env
+    environment:
+      WEBNOVEL_PROJECT_ROOT: /project
+      WEBNOVEL_DATA_PATH: /project/data
+      WEBNOVEL_STORAGE_PATH: /project/storage
+      WEBNOVEL_LOGS_PATH: /project/logs
+      WEBNOVEL_BACKUPS_PATH: /project/backups
+      WEBNOVEL_DATABASE_URL: postgresql+psycopg://${WEBNOVEL_POSTGRES_USER}:${WEBNOVEL_POSTGRES_PASSWORD}@postgres:5432/${WEBNOVEL_POSTGRES_DB}
+      WEBNOVEL_REDIS_URL: redis://:${WEBNOVEL_REDIS_PASSWORD}@redis:6379/0
+      WEBNOVEL_RIGHTS_RULES_PATH: /app/app/config/rights_rules.json
+    volumes:
+      - ./data:/project/data
+      - ./storage:/project/storage
+      - ./database:/project/database
+      - ./logs:/project/logs
+      - ./backups:/project/backups
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: worker
+    networks:
+      - webnovel_network
+
+  scheduler:
+    image: webnovel_backend:local
+    container_name: ${WEBNOVEL_SCHEDULER_CONTAINER:-webnovel_scheduler}
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/project/data/celerybeat-schedule"]
+    env_file:
+      - .env
+    environment:
+      WEBNOVEL_PROJECT_ROOT: /project
+      WEBNOVEL_DATA_PATH: /project/data
+      WEBNOVEL_STORAGE_PATH: /project/storage
+      WEBNOVEL_LOGS_PATH: /project/logs
+      WEBNOVEL_BACKUPS_PATH: /project/backups
+      WEBNOVEL_DATABASE_URL: postgresql+psycopg://${WEBNOVEL_POSTGRES_USER}:${WEBNOVEL_POSTGRES_PASSWORD}@postgres:5432/${WEBNOVEL_POSTGRES_DB}
+      WEBNOVEL_REDIS_URL: redis://:${WEBNOVEL_REDIS_PASSWORD}@redis:6379/0
+      WEBNOVEL_RIGHTS_RULES_PATH: /app/app/config/rights_rules.json
+    volumes:
+      - ./data:/project/data
+      - ./storage:/project/storage
+      - ./database:/project/database
+      - ./logs:/project/logs
+      - ./backups:/project/backups
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: scheduler
     networks:
       - webnovel_network
 

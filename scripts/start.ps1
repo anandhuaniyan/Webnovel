@@ -27,9 +27,28 @@ $composeArguments = @(
 if ($WithStorage) {
     $composeArguments += @('--profile', 'storage')
 }
-$composeArguments += @('up', '-d')
 
-& docker @composeArguments
+& docker @composeArguments build frontend backend
+if ($LASTEXITCODE -ne 0) {
+    throw 'Webnovel image build failed.'
+}
+
+& docker @composeArguments up -d postgres redis
+if ($LASTEXITCODE -ne 0) {
+    throw 'Webnovel database or Redis startup failed.'
+}
+
+foreach ($attempt in 1..60) {
+    $postgresHealth = (& docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' webnovel_postgres).Trim()
+    $redisHealth = (& docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' webnovel_redis).Trim()
+    if ($postgresHealth -eq 'healthy' -and $redisHealth -eq 'healthy') { break }
+    if ($attempt -eq 60) { throw 'Webnovel dependencies did not become healthy.' }
+    Start-Sleep -Seconds 1
+}
+
+& (Join-Path $PSScriptRoot 'migrate.ps1')
+
+& docker @composeArguments up -d
 if ($LASTEXITCODE -ne 0) {
     throw 'Webnovel startup failed. No unrelated Docker resources were modified.'
 }
