@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv
+**/.venv
+**/node_modules
+**/__pycache__
+data
+storage
+database
+logs
+backups
+tests

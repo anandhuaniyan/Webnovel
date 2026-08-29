@@ -1,0 +1,20 @@
+---
+description: Enforce complete Webnovel project and runtime isolation
+alwaysApply: true
+---
+
+# Webnovel Isolation
+
+- Treat `C:\Users\anadh\Development\Webnovel` as the only project root.
+- Do not modify, move, delete, or derive configuration from anything outside this root.
+- Keep source, dependencies, virtual environments, caches, generated files, downloads, logs, backups, databases, and temporary files inside this root.
+- Never reuse another project's `.env`, database, storage, Docker network, volume, container, port, or development server.
+- Read local configuration only from this project's `.env`; keep `.env` untracked.
+- Run Node package installs only from a package directory beneath this root. If Python is introduced, use `C:\Users\anadh\Development\Webnovel\.venv`.
+- Before startup, run `scripts\select-ports.ps1` and `scripts\preflight.ps1` from the project root.
+- Never stop the process holding a preferred port. Persist an unused replacement in `.env` and update dependent URLs.
+- Use Compose project `webnovel_platform`, network `webnovel_network`, and only the `webnovel_*` containers and volumes declared here.
+- Never run global Docker cleanup or prune commands. Never remove project volumes automatically.
+- Before a migration, run `scripts\verify-database.ps1 -RequireConnection`; abort unless the actual database is `webnovel` and its Compose project is `webnovel_platform`.
+- Before a commit, verify `git rev-parse --show-toplevel` equals `C:/Users/anadh/Development/Webnovel`; otherwise stop.
+- If an operation might affect another project or shared resource, do not perform it. Create a dedicated Webnovel resource instead.

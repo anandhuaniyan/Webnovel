@@ -1,0 +1,124 @@
+name: ${COMPOSE_PROJECT_NAME:-webnovel_platform}
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: webnovel_frontend:local
+    container_name: ${WEBNOVEL_FRONTEND_CONTAINER:-webnovel_frontend}
+    restart: unless-stopped
+    ports:
+      - "${WEBNOVEL_FRONTEND_HOST:-127.0.0.1}:${WEBNOVEL_FRONTEND_PORT:?WEBNOVEL_FRONTEND_PORT is required}:80"
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: frontend
+    networks:
+      - webnovel_network
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: ${WEBNOVEL_POSTGRES_CONTAINER:-webnovel_postgres}
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_DB: ${WEBNOVEL_POSTGRES_DB:?WEBNOVEL_POSTGRES_DB is required}
+      POSTGRES_USER: ${WEBNOVEL_POSTGRES_USER:?WEBNOVEL_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${WEBNOVEL_POSTGRES_PASSWORD:?WEBNOVEL_POSTGRES_PASSWORD is required}
+    ports:
+      - "${WEBNOVEL_POSTGRES_HOST:-127.0.0.1}:${WEBNOVEL_POSTGRES_PORT:?WEBNOVEL_POSTGRES_PORT is required}:5432"
+    volumes:
+      - webnovel_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: postgres
+    networks:
+      - webnovel_network
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: ${WEBNOVEL_REDIS_CONTAINER:-webnovel_redis}
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${WEBNOVEL_REDIS_PASSWORD:?WEBNOVEL_REDIS_PASSWORD is required}
+    ports:
+      - "${WEBNOVEL_REDIS_HOST:-127.0.0.1}:${WEBNOVEL_REDIS_PORT:?WEBNOVEL_REDIS_PORT is required}:6379"
+    volumes:
+      - webnovel_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${WEBNOVEL_REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      WEBNOVEL_REDIS_PASSWORD: ${WEBNOVEL_REDIS_PASSWORD:?WEBNOVEL_REDIS_PASSWORD is required}
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: redis
+    networks:
+      - webnovel_network
+
+  storage:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: ${WEBNOVEL_STORAGE_CONTAINER:-webnovel_storage}
+    profiles: ["storage"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${WEBNOVEL_STORAGE_ROOT_USER:?WEBNOVEL_STORAGE_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${WEBNOVEL_STORAGE_ROOT_PASSWORD:?WEBNOVEL_STORAGE_ROOT_PASSWORD is required}
+    ports:
+      - "${WEBNOVEL_STORAGE_HOST:-127.0.0.1}:${WEBNOVEL_STORAGE_PORT:?WEBNOVEL_STORAGE_PORT is required}:9000"
+      - "${WEBNOVEL_STORAGE_HOST:-127.0.0.1}:${WEBNOVEL_STORAGE_CONSOLE_PORT:?WEBNOVEL_STORAGE_CONSOLE_PORT is required}:9001"
+    volumes:
+      - webnovel_storage_data:/data
+    labels:
+      com.webnovel.project: webnovel_platform
+      com.webnovel.component: storage
+    networks:
+      - webnovel_network
+
+networks:
+  webnovel_network:
+    name: ${WEBNOVEL_DOCKER_NETWORK:-webnovel_network}
+    driver: bridge
+    labels:
+      com.webnovel.project: webnovel_platform
+
+volumes:
+  webnovel_postgres_data:
+    name: webnovel_postgres_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${WEBNOVEL_DATABASE_PATH:?WEBNOVEL_DATABASE_PATH is required}/postgres
+    labels:
+      com.webnovel.project: webnovel_platform
+  webnovel_redis_data:
+    name: webnovel_redis_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${WEBNOVEL_DATABASE_PATH:?WEBNOVEL_DATABASE_PATH is required}/redis
+    labels:
+      com.webnovel.project: webnovel_platform
+  webnovel_storage_data:
+    name: webnovel_storage_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${WEBNOVEL_STORAGE_PATH:?WEBNOVEL_STORAGE_PATH is required}/minio
+    labels:
+      com.webnovel.project: webnovel_platform

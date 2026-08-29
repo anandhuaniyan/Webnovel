@@ -1,0 +1,36 @@
+# Local configuration and secrets
+.env
+
+# Language and tool caches
+.venv/
+node_modules/
+frontend/node_modules/
+backend/.venv/
+workers/.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Runtime data remains local to this project
+data/source-books/*
+data/processed-books/*
+data/rights-evidence/*
+data/imports/*
+data/exports/*
+storage/covers/*
+storage/chapter-images/*
+storage/temporary/*
+storage/minio/*
+database/postgres/*
+database/redis/*
+logs/*
+backups/*
+
+# Preserve the isolated directory layout
+!.gitkeep
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
