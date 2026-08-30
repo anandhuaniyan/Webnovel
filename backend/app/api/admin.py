@@ -36,7 +36,7 @@ from app.services.deduplication import DeduplicationService
 from app.services.monetization import MonetizationService
 from app.services.rights import RightsEngine
 from app.services.storage import StorageService
-from app.workers.tasks import discover, generate_cover, process_import
+from app.workers.tasks import discover, discover_item, generate_cover, process_import
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin_key)])
 
@@ -171,6 +171,14 @@ def start_discovery(source_code: str, page: int = 1, limit: int = Query(default=
         raise HTTPException(status_code=400, detail="Unsupported source")
     task = discover.delay(source_code, page, limit)
     return {"task_id": task.id, "source": source_code, "page": page, "limit": limit}
+
+
+@router.post("/discovery/{source_code}/items/{external_id}", status_code=202)
+def start_item_discovery(source_code: str, external_id: str) -> dict:
+    if source_code not in {"gutenberg", "standard_ebooks", "wikisource"}:
+        raise HTTPException(status_code=400, detail="Unsupported source")
+    task = discover_item.delay(source_code, external_id)
+    return {"task_id": task.id, "source": source_code, "external_id": external_id}
 
 
 @router.post("/import-jobs/{job_id}/run", status_code=202)
@@ -446,6 +454,7 @@ def novel_action(novel_id: int, payload: AdminAction, db: Session = Depends(get_
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
     result: dict = {"action": payload.action}
+    queued_task: tuple[str, int] | None = None
     if payload.action in {"publish", "republish"}:
         decision = RightsEngine().enforce_publication(db, novel)
         if not decision.allowed:
@@ -492,7 +501,7 @@ def novel_action(novel_id: int, payload: AdminAction, db: Session = Depends(get_
         novel.ads_eligible = False
         job.status = ImportStatus.PARSED.value
         job.next_retry_at = None
-        process_import.delay(job.id)
+        queued_task = ("process_import", job.id)
     elif payload.action == "regenerate_cover":
         if get_settings().ai_image_provider != "http":
             raise HTTPException(
@@ -505,15 +514,14 @@ def novel_action(novel_id: int, payload: AdminAction, db: Session = Depends(get_
         job.status = ImportStatus.READY_FOR_COVER.value
         job.checkpoint = "GENERATE_COVER"
         job.next_retry_at = None
-        task = generate_cover.delay(novel.id)
-        result["task_id"] = task.id
+        queued_task = ("generate_cover", novel.id)
         result["approval_required"] = True
     elif payload.action == "ready_to_publish":
         job = db.scalar(select(ImportJob).where(ImportJob.novel_id == novel.id).order_by(ImportJob.id.desc()))
         if not job:
             raise HTTPException(status_code=404, detail="Import job not found")
         job.status = ImportStatus.READY_TO_PUBLISH.value
-        process_import.delay(job.id)
+        queued_task = ("process_import", job.id)
     db.add(
         AuditLog(
             actor_type="ADMIN_KEY",
@@ -524,6 +532,10 @@ def novel_action(novel_id: int, payload: AdminAction, db: Session = Depends(get_
         )
     )
     db.commit()
+    if queued_task:
+        task_name, entity_id = queued_task
+        task = generate_cover.delay(entity_id) if task_name == "generate_cover" else process_import.delay(entity_id)
+        result["task_id"] = task.id
     return {**result, "novel_id": novel.id, "published": novel.published, "ads_eligible": novel.ads_eligible}
 
 

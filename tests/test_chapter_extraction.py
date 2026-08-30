@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from app.services.chapter_extraction import ChapterExtractionService
+from ebooklib import epub
 
 
 def test_extracts_roman_named_and_numbered_chapters_in_order() -> None:
@@ -45,3 +48,34 @@ def test_html_event_handlers_and_unsafe_urls_are_removed() -> None:
     assert "javascript:" not in chapters[0].content_html
     assert "Safe text" in chapters[0].content_text
     assert "link" in chapters[0].content_text
+
+
+def test_epub_splits_embedded_chapters_and_drops_gutenberg_boilerplate(tmp_path: Path) -> None:
+    book = epub.EpubBook()
+    book.set_identifier("test-book")
+    book.set_title("Test Book")
+    book.set_language("en")
+    content = epub.EpubHtml(title="Story", file_name="story.xhtml", lang="en")
+    content.content = """
+    <header class="pg-boilerplate" id="pg-header"><p>Project Gutenberg header</p></header>
+    <h2><span class="caption">An illustration caption.</span> CHAPTER I.</h2>
+    <p>This is the opening chapter with enough useful words to be retained by the EPUB extractor.<span class="x-ebookmaker-pageno">{2}</span></p>
+    <div class="figcenter"><p>Decorative plate caption and copyright notice.</p></div>
+    <h2>CHAPTER II.</h2>
+    <p>This is the second chapter with enough different words to verify that ordering is preserved.</p>
+    <footer class="pg-boilerplate" id="pg-footer"><h2>THE FULL PROJECT GUTENBERG LICENSE</h2></footer>
+    """
+    book.add_item(content)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", content]
+    target = tmp_path / "book.epub"
+    epub.write_epub(str(target), book)
+
+    chapters = ChapterExtractionService().extract_epub(target)
+
+    assert [chapter.title for chapter in chapters] == ["CHAPTER I.", "CHAPTER II."]
+    assert [chapter.order for chapter in chapters] == [1, 2]
+    assert all("Gutenberg" not in chapter.content_text for chapter in chapters)
+    assert all("{2}" not in chapter.content_text for chapter in chapters)
+    assert all("Decorative plate" not in chapter.content_text for chapter in chapters)

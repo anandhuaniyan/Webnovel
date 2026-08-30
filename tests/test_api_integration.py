@@ -17,7 +17,7 @@ from app.models import (
 from app.services.rights import RightsEngine
 from app.services.search import SearchService
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect
+from sqlalchemy import inspect, update
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
@@ -50,8 +50,10 @@ def test_migration_created_required_tables() -> None:
 
 
 def test_health_public_config_and_empty_fail_closed_catalogue(
-    client: TestClient,
+    client: TestClient, db_session: Session
 ) -> None:
+    db_session.execute(update(Novel).values(published=False))
+    db_session.flush()
     assert client.get("/health").json()["status"] == "healthy"
     config = client.get("/api/config/public").json()
     assert config["adsense_enabled"] is False

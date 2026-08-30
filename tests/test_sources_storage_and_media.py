@@ -1,3 +1,4 @@
+import errno
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,6 +6,7 @@ from types import SimpleNamespace
 from app.core.enums import IllustrationMode
 from app.services.covers import CoverBrief, CoverGenerationService
 from app.services.illustrations import ChapterIllustrationService
+from app.services.ingestion import IngestionService
 from app.services.sources.base import SourceAdapter, SourceCandidate
 from app.services.storage import StorageService
 from PIL import Image
@@ -61,6 +63,28 @@ def test_temporary_cleanup_never_targets_other_categories(tmp_path: Path) -> Non
     assert result["removed"] == 1
     assert not expired.exists()
     assert protected.exists()
+
+
+def test_download_promotion_handles_cross_device_mounts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    temporary = tmp_path / "temporary.epub"
+    target = tmp_path / "archive" / "original.epub"
+    target.parent.mkdir()
+    temporary.write_bytes(b"canonical source bytes")
+    original_replace = Path.replace
+
+    def cross_device_once(path: Path, destination: Path):
+        if path == temporary:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", cross_device_once)
+
+    IngestionService._promote_download(temporary, target)
+
+    assert target.read_bytes() == b"canonical source bytes"
+    assert not temporary.exists()
 
 
 class SolidCoverProvider:

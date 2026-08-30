@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import re
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -56,6 +58,15 @@ class IngestionService:
             return self._summary(job, "already complete")
         if job.next_retry_at and job.next_retry_at > datetime.now(UTC):
             return self._summary(job, "retry not due")
+        if job.status == ImportStatus.FAILED.value:
+            resume_status = (job.payload or {}).get("resume_status")
+            if resume_status not in {status.value for status in ImportStatus} - {
+                ImportStatus.FAILED.value,
+                ImportStatus.PUBLISHED.value,
+            }:
+                raise RuntimeError("failed import has no valid resume status")
+            job.status = resume_status
+            job.next_retry_at = None
 
         job.attempt_count += 1
         job.started_at = datetime.now(UTC)
@@ -70,6 +81,9 @@ class IngestionService:
             db.rollback()
             job = db.get(ImportJob, job_id)
             if job:
+                payload = dict(job.payload or {})
+                payload["resume_status"] = job.status
+                job.payload = payload
                 job.status = ImportStatus.FAILED.value
                 job.error = str(exc)[:10_000]
                 job.next_retry_at = datetime.now(UTC) + timedelta(
@@ -225,7 +239,7 @@ class IngestionService:
                 with temporary.open("wb") as handle:
                     for chunk in response.iter_bytes(1024 * 1024):
                         handle.write(chunk)
-            temporary.replace(target)
+            self._promote_download(temporary, target)
         source_item.archived_path = str(target.relative_to(self.settings.project_root))
         source_item.source_hash = self.storage.sha256(target)
         job.status = ImportStatus.DOWNLOADED.value
@@ -322,6 +336,18 @@ class IngestionService:
             encoding="utf-8",
         )
         return target
+
+    @staticmethod
+    def _promote_download(temporary: Path, target: Path) -> None:
+        try:
+            temporary.replace(target)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            staged = target.with_suffix(f"{target.suffix}.part")
+            shutil.copyfile(temporary, staged)
+            staged.replace(target)
+            temporary.unlink()
 
     @staticmethod
     def _extract_year(metadata: dict) -> int | None:

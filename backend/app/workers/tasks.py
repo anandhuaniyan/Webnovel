@@ -28,6 +28,21 @@ def discover(self, source_code: str, page: int = 1, limit: int = 20) -> dict:
 
 
 @celery_app.task(
+    name="webnovel.discover_item",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=5,
+)
+def discover_item(self, source_code: str, external_id: str) -> dict:
+    with SessionLocal() as db:
+        result = DiscoveryService().discover_item(db, source_code, external_id)
+    if result["outcome"] == "created" and result["job_id"]:
+        process_import.delay(result["job_id"])
+    return result
+
+
+@celery_app.task(
     name="webnovel.process_import", bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=5
 )
 def process_import(self, job_id: int) -> dict:
