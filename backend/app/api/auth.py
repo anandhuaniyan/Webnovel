@@ -253,6 +253,7 @@ def continue_reading(user: User = Depends(get_current_user), db: Session = Depen
             if chapter
             else None,
             "position_percent": progress.position_percent,
+            "updated_at": progress.updated_at,
         }
         for progress, novel, chapter in rows
     ]

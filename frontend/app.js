@@ -200,3 +200,7 @@ window.Webnovel = Object.freeze({ createAdSlot, track });
 document.querySelector('#current-year').textContent = new Date().getFullYear();
 if (!readConsent()) openConsent(false);
 loadHome();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+}

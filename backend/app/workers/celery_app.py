@@ -31,6 +31,10 @@ celery_app.conf.update(
             "task": "webnovel.cleanup_temporary_files",
             "schedule": 86_400.0,
         },
+        "chapter-artwork-check-daily": {
+            "task": "webnovel.check_chapter_artwork",
+            "schedule": 86_400.0,
+        },
     },
 )
 celery_app.autodiscover_tasks(["app.workers"])

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -10,12 +10,14 @@ from app.models import (
     AnalyticsEvent,
     Author,
     Chapter,
+    ChapterImage,
     Genre,
     Novel,
     NovelGenre,
     Review,
     TakedownRequest,
     User,
+    Work,
 )
 from app.schemas import (
     AnalyticsEventCreate,
@@ -65,7 +67,16 @@ def novels(
     page_size: int = Query(default=24, ge=1, le=100),
     genre: str | None = None,
     author: str | None = None,
-    sort: str = Query(default="recent", pattern="^(recent|title|rating|length)$"),
+    language: str | None = Query(default=None, min_length=2, max_length=20),
+    publication_year_from: int | None = Query(default=None, ge=1, le=3000),
+    publication_year_to: int | None = Query(default=None, ge=1, le=3000),
+    min_chapters: int | None = Query(default=None, ge=0),
+    max_chapters: int | None = Query(default=None, ge=0),
+    max_reading_minutes: int | None = Query(default=None, ge=1),
+    illustrated: bool | None = None,
+    sort: str = Query(
+        default="recent", pattern="^(recent|updated|popular|title|rating|length)$"
+    ),
     db: Session = Depends(get_db),
 ) -> PaginatedNovels:
     statement = select(Novel).where(*publication_filter())
@@ -75,8 +86,31 @@ def novels(
         )
     if author:
         statement = statement.join(Author, Author.id == Novel.primary_author_id).where(Author.slug == author)
+    if language:
+        statement = statement.where(Novel.language == language.lower())
+    if publication_year_from is not None or publication_year_to is not None:
+        statement = statement.join(Work, Work.id == Novel.work_id)
+        if publication_year_from is not None:
+            statement = statement.where(Work.first_publication_year >= publication_year_from)
+        if publication_year_to is not None:
+            statement = statement.where(Work.first_publication_year <= publication_year_to)
+    if min_chapters is not None:
+        statement = statement.where(Novel.chapter_count >= min_chapters)
+    if max_chapters is not None:
+        statement = statement.where(Novel.chapter_count <= max_chapters)
+    if max_reading_minutes is not None:
+        statement = statement.where(Novel.estimated_reading_minutes <= max_reading_minutes)
+    if illustrated is not None:
+        has_artwork = exists(
+            select(ChapterImage.id)
+            .join(Chapter, Chapter.id == ChapterImage.chapter_id)
+            .where(Chapter.novel_id == Novel.id, ChapterImage.approved.is_(True))
+        )
+        statement = statement.where(has_artwork if illustrated else ~has_artwork)
     ordering = {
         "recent": (Novel.published_at.desc(), Novel.id.desc()),
+        "updated": (Novel.updated_at.desc(), Novel.id.desc()),
+        "popular": (Novel.view_count.desc(), Novel.average_rating.desc()),
         "title": (Novel.title.asc(),),
         "rating": (Novel.average_rating.desc(), Novel.rating_count.desc()),
         "length": (Novel.total_words.asc(),),
@@ -127,11 +161,31 @@ def novel_chapter(slug: str, chapter_slug: str, db: Session = Depends(get_db)) -
         .order_by(Chapter.chapter_order)
         .limit(1)
     )
+    illustrations = db.scalars(
+        select(ChapterImage)
+        .where(ChapterImage.chapter_id == chapter.id, ChapterImage.approved.is_(True))
+        .order_by(ChapterImage.image_type.desc(), ChapterImage.placement_order)
+    ).all()
     return ChapterDetail(
         **ChapterSummary.model_validate(chapter).model_dump(),
         novel_slug=novel.slug,
         novel_title=novel.title,
         content_html=chapter.content_html,
+        illustrations=[
+            {
+                "id": image.id,
+                "image_type": image.image_type,
+                "placement_order": image.placement_order,
+                "paragraph_anchor": image.paragraph_anchor,
+                "url": f"/media/{image.path.replace('\\', '/').removeprefix('storage/')}",
+                "fallback_url": f"/media/{(image.fallback_path or image.path).replace('\\', '/').removeprefix('storage/')}",
+                "alt_text": image.alt_text,
+                "width": image.width,
+                "height": image.height,
+                "animation_type": image.animation_type,
+            }
+            for image in illustrations
+        ],
         previous_chapter=ChapterSummary.model_validate(previous) if previous else None,
         next_chapter=ChapterSummary.model_validate(next_chapter) if next_chapter else None,
     )

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from redis import Redis
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -20,6 +22,8 @@ from app.core.enums import (
 from app.core.security import require_admin_key
 from app.models import (
     AuditLog,
+    Chapter,
+    ChapterImage,
     ContactRequest,
     ImportJob,
     Novel,
@@ -36,7 +40,19 @@ from app.services.deduplication import DeduplicationService
 from app.services.monetization import MonetizationService
 from app.services.rights import RightsEngine
 from app.services.storage import StorageService
-from app.workers.tasks import discover, discover_item, generate_cover, process_import
+from app.workers.celery_app import celery_app
+from app.workers.tasks import (
+    discover,
+    discover_item,
+    generate_cover,
+    process_import,
+)
+from app.workers.tasks import (
+    generate_chapter_artwork as generate_chapter_artwork_task,
+)
+from app.workers.tasks import (
+    generate_novel_artwork as generate_novel_artwork_task,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin_key)])
 
@@ -81,6 +97,27 @@ class ModerationAction(BaseModel):
     reason: str = Field(min_length=5, max_length=2000)
 
 
+class ArtworkGenerationAction(BaseModel):
+    reason: str = Field(min_length=5, max_length=2000)
+    chapter_limit: int = Field(default=100, ge=1, le=500)
+
+
+def _service_status() -> dict:
+    redis_status = "unavailable"
+    workers: dict = {}
+    with suppress(Exception):
+        redis_client = Redis.from_url(get_settings().redis_url, socket_timeout=0.4)
+        redis_status = "healthy" if redis_client.ping() else "unavailable"
+        redis_client.close()
+    with suppress(Exception):
+        workers = celery_app.control.inspect(timeout=0.5).ping() or {}
+    return {
+        "database": "healthy",
+        "redis": redis_status,
+        "workers": {"status": "healthy" if workers else "unavailable", "active": len(workers)},
+    }
+
+
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)) -> dict:
     def count(model, *filters) -> int:
@@ -90,6 +127,7 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
         "catalogue": {
             "works": count(Novel),
             "published": count(Novel, Novel.published.is_(True)),
+            "staged": count(Novel, Novel.published.is_(False), Novel.content_type != "NON_TARGET"),
             "rejected_non_target": count(Novel, Novel.content_type == "NON_TARGET"),
             "rights_review": count(
                 Novel,
@@ -112,10 +150,39 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
                 QualityIssue, QualityIssue.blocking.is_(True), QualityIssue.resolved_at.is_(None)
             ),
             "open": count(QualityIssue, QualityIssue.resolved_at.is_(None)),
+            "incomplete_novels": count(
+                Novel,
+                Novel.completeness_status.in_(["INCOMPLETE", "POSSIBLY_INCOMPLETE", "UNKNOWN"]),
+            ),
+            "artwork_failures": count(
+                QualityIssue,
+                or_(
+                    QualityIssue.code.like("CHAPTER_ARTWORK_FAILED_%"),
+                    QualityIssue.code.like("CHAPTER_IMAGE_MISSING_%"),
+                ),
+                QualityIssue.resolved_at.is_(None),
+            ),
         },
         "media": {
             "covers_awaiting_approval": count(NovelImage, NovelImage.approved.is_(False)),
             "published_without_cover": count(Novel, Novel.published.is_(True), Novel.cover_path.is_(None)),
+            "chapter_artwork_awaiting_approval": count(
+                ChapterImage, ChapterImage.approved.is_(False)
+            ),
+            "published_chapters_without_artwork": db.scalar(
+                select(func.count(Chapter.id))
+                .join(Novel, Novel.id == Chapter.novel_id)
+                .where(
+                    Novel.published.is_(True),
+                    ~exists(
+                        select(ChapterImage.id).where(
+                            ChapterImage.chapter_id == Chapter.id,
+                            ChapterImage.approved.is_(True),
+                        )
+                    ),
+                )
+            )
+            or 0,
         },
         "takedowns": {
             "open": count(
@@ -136,6 +203,7 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
             )
         },
         "storage": StorageService().metrics(),
+        "services": _service_status(),
         "adsense_readiness": MonetizationService().readiness_report(db),
     }
 
@@ -377,6 +445,142 @@ def moderate_cover(image_id: int, payload: ModerationAction, db: Session = Depen
             actor_type="ADMIN_KEY",
             action="COVER_APPROVED" if payload.approved else "COVER_REJECTED",
             entity_type="novel_image",
+            entity_id=str(image.id),
+            details={"reason": payload.reason},
+        )
+    )
+    db.commit()
+    return {"image_id": image.id, "approved": image.approved}
+
+
+@router.get("/artwork-queue")
+def artwork_queue(limit: int = Query(default=100, ge=1, le=500), db: Session = Depends(get_db)) -> dict:
+    pending_rows = db.execute(
+        select(ChapterImage, Chapter, Novel)
+        .join(Chapter, Chapter.id == ChapterImage.chapter_id)
+        .join(Novel, Novel.id == Chapter.novel_id)
+        .where(ChapterImage.approved.is_(False))
+        .order_by(ChapterImage.created_at)
+        .limit(limit)
+    ).all()
+    missing_rows = db.execute(
+        select(Chapter, Novel)
+        .join(Novel, Novel.id == Chapter.novel_id)
+        .where(
+            Novel.published.is_(True),
+            ~exists(
+                select(ChapterImage.id).where(
+                    ChapterImage.chapter_id == Chapter.id,
+                    ChapterImage.approved.is_(True),
+                )
+            ),
+        )
+        .order_by(Novel.title, Chapter.chapter_order)
+        .limit(limit)
+    ).all()
+    return {
+        "pending": [
+            {
+                "image_id": image.id,
+                "chapter_id": chapter.id,
+                "novel_id": novel.id,
+                "novel_title": novel.title,
+                "chapter_title": chapter.chapter_title,
+                "image_type": image.image_type,
+                "placement_order": image.placement_order,
+                "path": image.path,
+                "url": f"/media/{image.path.replace('storage/', '', 1)}",
+                "animation_type": image.animation_type,
+                "generation_provider": image.generation_provider,
+                "generation_prompt": image.generation_prompt,
+                "alt_text": image.alt_text,
+            }
+            for image, chapter, novel in pending_rows
+        ],
+        "missing": [
+            {
+                "chapter_id": chapter.id,
+                "novel_id": novel.id,
+                "novel_title": novel.title,
+                "chapter_title": chapter.chapter_title,
+                "chapter_order": chapter.chapter_order,
+            }
+            for chapter, novel in missing_rows
+        ],
+    }
+
+
+@router.post("/chapters/{chapter_id}/artwork/generate", status_code=202)
+def generate_chapter_artwork(
+    chapter_id: int,
+    payload: ArtworkGenerationAction,
+    db: Session = Depends(get_db),
+) -> dict:
+    chapter = db.get(Chapter, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    if get_settings().ai_image_provider != "http":
+        raise HTTPException(
+            status_code=409,
+            detail="Chapter artwork generation is disabled until the approved HTTP provider is configured.",
+        )
+    db.add(
+        AuditLog(
+            actor_type="ADMIN_KEY",
+            action="CHAPTER_ARTWORK_QUEUED",
+            entity_type="chapter",
+            entity_id=str(chapter.id),
+            details={"reason": payload.reason},
+        )
+    )
+    db.commit()
+    task = generate_chapter_artwork_task.delay(chapter.id)
+    return {"chapter_id": chapter.id, "task_id": task.id, "approval_required": True}
+
+
+@router.post("/novels/{novel_id}/artwork/generate", status_code=202)
+def generate_novel_artwork(
+    novel_id: int,
+    payload: ArtworkGenerationAction,
+    db: Session = Depends(get_db),
+) -> dict:
+    novel = db.get(Novel, novel_id)
+    if not novel:
+        raise HTTPException(status_code=404, detail="Novel not found")
+    if get_settings().ai_image_provider != "http":
+        raise HTTPException(
+            status_code=409,
+            detail="Chapter artwork generation is disabled until the approved HTTP provider is configured.",
+        )
+    db.add(
+        AuditLog(
+            actor_type="ADMIN_KEY",
+            action="NOVEL_ARTWORK_QUEUED",
+            entity_type="novel",
+            entity_id=str(novel.id),
+            details={"reason": payload.reason, "chapter_limit": payload.chapter_limit},
+        )
+    )
+    db.commit()
+    task = generate_novel_artwork_task.delay(novel.id, payload.chapter_limit)
+    return {"novel_id": novel.id, "task_id": task.id, "approval_required": True}
+
+
+@router.post("/chapter-images/{image_id}/moderate")
+def moderate_chapter_artwork(
+    image_id: int,
+    payload: ModerationAction,
+    db: Session = Depends(get_db),
+) -> dict:
+    image = db.get(ChapterImage, image_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Chapter artwork not found")
+    image.approved = payload.approved
+    db.add(
+        AuditLog(
+            actor_type="ADMIN_KEY",
+            action="CHAPTER_ARTWORK_APPROVED" if payload.approved else "CHAPTER_ARTWORK_REJECTED",
+            entity_type="chapter_image",
             entity_id=str(image.id),
             details={"reason": payload.reason},
         )

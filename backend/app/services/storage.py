@@ -70,6 +70,10 @@ class StorageService:
         for path in temporary.rglob("*"):
             if not path.is_file():
                 continue
+            # Keep the tracked directory sentinel so a routine cleanup does not
+            # leave the repository dirty or remove the empty runtime directory.
+            if path.name == ".gitkeep":
+                continue
             modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
             if modified >= cutoff:
                 continue

@@ -12,6 +12,11 @@ body { min-height:100vh; }
 .panel .button { margin-top:20px; cursor:pointer; }
 .notice { min-height:24px; margin-top:15px; color:var(--forest); font-size:.86rem; }
 .notice.error { color:#9a332f; }
+.artwork-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:1rem; }
+.artwork-card { display:grid; gap:.65rem; padding:.75rem; border:1px solid var(--line); border-radius:.6rem; background:var(--paper); }
+.artwork-card img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:.35rem; }
+.artwork-card small { color:var(--muted); }
+.artwork-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .dashboard { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:30px; }
 .metric { padding:20px; border:1px solid var(--line); border-radius:14px; background:var(--paper); }
 .metric strong { display:block; font:2rem Georgia,serif; }

@@ -1,6 +1,6 @@
 # Webnovel Platform
 
-Webnovel is an isolated, copyright-first literature platform behind the existing frontend. It includes FastAPI, PostgreSQL, Redis/Celery workers, resumable multi-source ingestion, independent rights evidence, chapter extraction and integrity checks, search, accounts and reader state, admin workflows, SEO pages/sitemaps, consent-aware analytics, and disabled-by-default AdSense/provider integrations.
+Webnovel is an isolated, copyright-first literature platform behind the existing frontend. It includes FastAPI, PostgreSQL, Redis/Celery workers, resumable multi-source ingestion, independent rights evidence, chapter extraction and integrity checks, search, accounts and synchronized reader state, an immersive responsive reader, approved chapter artwork with subtle reduced-motion-safe animation, PWA caching, admin workflows, SEO pages/sitemaps, consent-aware analytics, and disabled-by-default AdSense/provider integrations.
 
 Every project file and persistent local path is rooted at `C:\Users\anadh\Development\Webnovel`. It does not share ports, networks, volumes, credentials, or configuration with another project.
 
@@ -46,7 +46,9 @@ After startup:
 - Account: `http://localhost:5273/account`
 - Admin: `http://localhost:5273/admin`
 
-The catalogue starts empty by design. Queue the 20-candidate Gutenberg checkpoint through the admin page or API. Workers will archive source claims and stop every candidate at independent rights review. Nothing is published merely because it was discovered or downloaded.
+The current local deployment contains 3 independently reviewed public-domain works with 209 complete chapters. The initial 20-candidate discovery checkpoint is retained for staged rights review; the remaining candidates stay unpublished until a human verifies their rights evidence. Nothing is published merely because it was discovered or downloaded.
+
+The reader supports synchronized progress, local offline fallback, bookmarks, chapter jumping, keyboard and touch navigation, type/size/spacing/width controls, light/sepia/dark themes, fullscreen focus, estimated time remaining, lazy chapter artwork, and `prefers-reduced-motion`. Installable PWA metadata and a bounded same-origin service worker cache keep the shell and recently read public chapters available after first load.
 
 ## Database safety
 
@@ -71,7 +73,7 @@ The local Python environment lives in `.venv` inside this project:
 ```powershell
 $env:PYTHONPATH = "$PWD\backend"
 .\.venv\Scripts\python.exe -m pytest -c backend\pyproject.toml tests
-.\.venv\Scripts\ruff.exe check backend tests
+.\.venv\Scripts\python.exe -m ruff check backend scripts tests
 ```
 
 The 10,000+ target is a staged operating goal, not a fabricated seed count: 20 → 100 → 1,000 → 5,000 → 10,000+. Only independently rights-verified, complete, reviewed editions count as published.

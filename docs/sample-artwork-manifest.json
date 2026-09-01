@@ -1,0 +1,69 @@
+[
+  {
+    "chapter_id": 455,
+    "source_path": "storage/chapter-images/_generated-inputs/moby-dick-chapter-1-hero.png",
+    "image_type": "hero",
+    "placement_order": 0,
+    "paragraph_anchor": null,
+    "animation_type": "drift",
+    "alt_text": "A lone sailor walks through rainy nineteenth-century Manhattan toward crowded wharves and a misty harbor.",
+    "prompt": "Create a brand-new original wide cinematic chapter-opening illustration for the public-domain novel Moby-Dick; or, The Whale, Chapter I, Loomings. Scene: a solitary, anonymous 1840s sailor-narrator in a dark wool coat walks through damp, drizzly November streets of lower Manhattan toward the Battery and the harbor; distant wharves, tall ship masts, gray water, warehouse silhouettes, and groups of quiet water-gazers draw the eye seaward. Moody maritime atmosphere, deep ink-blue and weathered umber palette, pale cold light through fog, painterly editorial storybook realism, historically accurate clothing and architecture, calm negative space, layered depth suitable for an extremely subtle slow drift animation. 16:9 landscape composition. Do not depict any recognizable actor or adaptation design. No copied illustration, no living-artist imitation, no text, title, logo, signature, or watermark.",
+    "visual_profile": {
+      "historical_period": "1840s Atlantic seafaring world",
+      "environments": ["Manhattan wharves", "North Atlantic ports", "wooden sailing ships"],
+      "atmosphere": "salt air, philosophical solitude, immense waters, weathered maritime life",
+      "illustration_style": "cinematic painterly maritime editorial illustration",
+      "lighting_style": "cold overcast daylight with sparse warm practical light",
+      "color_palette": ["ink blue", "weathered umber", "fog gray", "cold sea green"],
+      "visual_motifs": ["masts", "ropes", "horizon lines", "wet stone", "ocean weather"]
+    }
+  },
+  {
+    "chapter_id": 394,
+    "source_path": "storage/chapter-images/_generated-inputs/pride-and-prejudice-chapter-1-hero.png",
+    "image_type": "hero",
+    "placement_order": 0,
+    "paragraph_anchor": null,
+    "animation_type": "slow_zoom",
+    "alt_text": "Mr. and Mrs. Bennet discuss the new tenant of Netherfield in a warm Regency drawing room.",
+    "prompt": "Create a brand-new original wide cinematic chapter-opening illustration for the public-domain novel Pride and Prejudice, Chapter I. Scene grounded in the canonical opening: inside a comfortable but not lavish English country-house drawing room around 1811, an intelligent dry-humored middle-aged gentleman sits with a book while his animated wife leans forward to tell him that Netherfield Park has been let to a wealthy single young man; the conversation is lively but domestic, with no other named characters visible. Historically accurate Regency clothing, furniture, sash windows, and objects. Warm late-afternoon window light, restrained sage, cream, walnut, and faded rose palette, elegant painterly editorial storybook realism, balanced 16:9 landscape composition with calm negative space for subtle slow-zoom motion. Fresh interpretation only; do not resemble any film or television actors, costumes, sets, or adaptation designs. No copied illustration, no living-artist imitation, no text, title, logo, signature, or watermark.",
+    "visual_profile": {
+      "historical_period": "English Regency, circa 1811",
+      "environments": ["country houses", "drawing rooms", "Hertfordshire lanes and estates"],
+      "atmosphere": "witty social observation, domestic warmth, restrained romantic tension",
+      "illustration_style": "elegant painterly Regency editorial illustration",
+      "lighting_style": "warm natural window light and gentle candlelight",
+      "color_palette": ["sage", "cream", "walnut", "faded rose"],
+      "visual_motifs": ["letters", "books", "sash windows", "garden views", "formal interiors"]
+    }
+  },
+  {
+    "chapter_id": 382,
+    "source_path": "storage/chapter-images/_generated-inputs/sherlock-holmes-story-1-hero.png",
+    "image_type": "hero",
+    "placement_order": 0,
+    "paragraph_anchor": null,
+    "animation_type": "drift",
+    "alt_text": "A Victorian doctor pauses on wet Baker Street beneath the brightly lit rooms of his consulting-detective friend.",
+    "prompt": "Create a brand-new original wide cinematic chapter-opening illustration for the public-domain story A Scandal in Bohemia in The Adventures of Sherlock Holmes. Ground the scene in the canonical opening: London, evening of 20 March 1888; an anonymous Victorian doctor in a dark overcoat pauses on wet Baker Street and looks up at brilliantly lit first-floor windows, where the tall spare silhouette of a consulting detective moves behind thin curtains among books and lamplight. The street should show restrained period details, horse-carriage traces, damp cobbles, discreet fog, and no modern objects. Moody amber interior light against blue-black rain, painterly editorial storybook realism, mysterious but calm, layered 16:9 landscape composition with negative space suitable for subtle lamp-flicker or drift animation. Fresh interpretation only; no resemblance to actors, costumes, sets, or visual designs from any adaptation. No copied illustration, no living-artist imitation, no text, title, logo, signature, or watermark.",
+    "visual_profile": {
+      "historical_period": "late Victorian London, 1888",
+      "environments": ["Baker Street rooms", "gaslit London streets", "Victorian drawing rooms"],
+      "atmosphere": "precise observation, confidential intrigue, lamplit mystery",
+      "illustration_style": "cinematic painterly Victorian mystery editorial illustration",
+      "lighting_style": "warm gaslight and firelight against blue-black nights",
+      "color_palette": ["charcoal", "deep burgundy", "walnut", "amber", "rain blue"],
+      "visual_motifs": ["lamps", "papers", "magnifying lenses", "wet cobbles", "window silhouettes"]
+    }
+  },
+  {
+    "chapter_id": 382,
+    "source_path": "storage/chapter-images/_generated-inputs/sherlock-holmes-story-1-interval-1.png",
+    "image_type": "interval",
+    "placement_order": 1,
+    "paragraph_anchor": 62,
+    "animation_type": "light_flicker",
+    "alt_text": "In a lamplit Baker Street sitting room, a detective listens while a doctor searches an index and a royal visitor explains his case.",
+    "prompt": "Create a brand-new original wide editorial interval illustration for the public-domain story A Scandal in Bohemia, grounded in this scene: inside a lamplit Baker Street sitting room in 1888, a tall spare consulting detective reclines with eyes half closed while his doctor companion searches a densely indexed scrapbook; across from them, a richly dressed but anonymous Central European king recounts his earlier acquaintance with a celebrated opera singer in Warsaw. Emphasize observation, documents, firelight, and the tension of a confidential consultation; the singer is not present. Historically accurate late-Victorian clothing, books, furnishings, gaslight and firelight. Painterly editorial storybook realism, deep burgundy, walnut, amber, and charcoal palette, layered 8:5 landscape composition with calm space, suitable for an almost imperceptible light-flicker effect. Fresh interpretation only; no resemblance to actors, costumes, sets, or designs from adaptations. No copied illustration, no living-artist imitation, no text, legible writing, logo, signature, or watermark."
+  }
+]

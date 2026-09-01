@@ -6,9 +6,20 @@ from sqlalchemy import or_, select
 
 from app.core.database import SessionLocal
 from app.core.enums import ImportStatus
-from app.models import Author, Genre, ImportJob, Novel, NovelGenre, Work
+from app.models import (
+    Author,
+    Chapter,
+    ChapterImage,
+    Genre,
+    ImportJob,
+    Novel,
+    NovelGenre,
+    QualityIssue,
+    Work,
+)
 from app.services.covers import CoverBrief, CoverGenerationService
 from app.services.discovery import DiscoveryService
+from app.services.illustrations import ChapterIllustrationService
 from app.services.ingestion import IngestionService
 from app.services.rights import RightsEngine
 from app.services.storage import StorageService
@@ -86,6 +97,78 @@ def generate_cover(self, novel_id: int) -> dict:
         return {"novel_id": novel.id, "generated": len(images), "approval_required": True}
 
 
+@celery_app.task(
+    name="webnovel.generate_chapter_artwork",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def generate_chapter_artwork(self, chapter_id: int) -> dict:
+    with SessionLocal() as db:
+        chapter = db.get(Chapter, chapter_id)
+        if not chapter:
+            raise LookupError(f"chapter not found: {chapter_id}")
+        novel = db.get(Novel, chapter.novel_id)
+        if not novel:
+            raise LookupError(f"novel not found for chapter: {chapter_id}")
+        try:
+            images = ChapterIllustrationService().generate_for_chapter(db, novel, chapter)
+        except Exception as exc:
+            issue = db.scalar(
+                select(QualityIssue).where(
+                    QualityIssue.novel_id == novel.id,
+                    QualityIssue.code == f"CHAPTER_ARTWORK_FAILED_{chapter.id}",
+                    QualityIssue.resolved_at.is_(None),
+                )
+            )
+            if issue:
+                issue.message = str(exc)[:2_000]
+            else:
+                db.add(
+                    QualityIssue(
+                        novel_id=novel.id,
+                        code=f"CHAPTER_ARTWORK_FAILED_{chapter.id}",
+                        severity="WARNING",
+                        message=str(exc)[:2_000],
+                        blocking=False,
+                    )
+                )
+            db.commit()
+            raise
+        for issue in db.scalars(
+            select(QualityIssue).where(
+                QualityIssue.novel_id == novel.id,
+                QualityIssue.code == f"CHAPTER_ARTWORK_FAILED_{chapter.id}",
+                QualityIssue.resolved_at.is_(None),
+            )
+        ).all():
+            issue.resolved_at = datetime.now(UTC)
+        db.commit()
+        return {
+            "novel_id": novel.id,
+            "chapter_id": chapter.id,
+            "generated": len(images),
+            "approval_required": True,
+        }
+
+
+@celery_app.task(name="webnovel.generate_novel_artwork")
+def generate_novel_artwork(novel_id: int, limit: int = 20) -> dict:
+    with SessionLocal() as db:
+        novel = db.get(Novel, novel_id)
+        if not novel:
+            raise LookupError(f"novel not found: {novel_id}")
+        chapter_ids = db.scalars(
+            select(Chapter.id)
+            .where(Chapter.novel_id == novel.id)
+            .order_by(Chapter.chapter_order)
+            .limit(min(max(limit, 1), 500))
+        ).all()
+    queued = [generate_chapter_artwork.delay(chapter_id).id for chapter_id in chapter_ids]
+    return {"novel_id": novel_id, "queued": len(queued), "task_ids": queued}
+
+
 @celery_app.task(name="webnovel.retry_due_imports")
 def retry_due_imports() -> dict:
     now = datetime.now(UTC)
@@ -118,3 +201,44 @@ def storage_metrics() -> dict:
 @celery_app.task(name="webnovel.cleanup_temporary_files")
 def cleanup_temporary_files() -> dict:
     return StorageService().cleanup_temporary_files(older_than_hours=24)
+
+
+@celery_app.task(name="webnovel.check_chapter_artwork")
+def check_chapter_artwork() -> dict:
+    storage = StorageService()
+    missing = 0
+    with SessionLocal() as db:
+        for image in db.scalars(select(ChapterImage)).all():
+            path = (storage.root / image.path).resolve()
+            issue_code = f"CHAPTER_IMAGE_MISSING_{image.id}"
+            issue = db.scalar(
+                select(QualityIssue).where(
+                    QualityIssue.code == issue_code,
+                    QualityIssue.resolved_at.is_(None),
+                )
+            )
+            present = (
+                False
+                if path != storage.root and storage.root not in path.parents
+                else path.is_file()
+            )
+            if not present:
+                missing += 1
+                if issue:
+                    issue.message = f"Artwork file is missing: {image.path}"
+                else:
+                    chapter = db.get(Chapter, image.chapter_id)
+                    db.add(
+                        QualityIssue(
+                            novel_id=chapter.novel_id if chapter else None,
+                            code=issue_code,
+                            severity="ERROR",
+                            message=f"Artwork file is missing: {image.path}",
+                            blocking=True,
+                        )
+                    )
+                image.approved = False
+            elif issue:
+                issue.resolved_at = datetime.now(UTC)
+        db.commit()
+    return {"checked": True, "missing": missing}

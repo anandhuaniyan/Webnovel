@@ -70,6 +70,7 @@ class ChapterDetail(ChapterSummary):
     novel_slug: str
     novel_title: str
     content_html: str
+    illustrations: list[dict] = []
     previous_chapter: ChapterSummary | None = None
     next_chapter: ChapterSummary | None = None
 
@@ -145,7 +146,8 @@ class ReaderSettingsUpdate(BaseModel):
     font_family: str = Field(default="serif", pattern="^(serif|sans-serif|dyslexic)$")
     font_scale: int = Field(default=100, ge=80, le=180)
     line_height: int = Field(default=185, ge=130, le=240)
-    theme: str = Field(default="paper", pattern="^(paper|light|dark)$")
+    content_width: int = Field(default=760, ge=480, le=1100)
+    theme: str = Field(default="paper", pattern="^(paper|light|dark|sepia)$")
 
 
 class AnalyticsEventCreate(BaseModel):

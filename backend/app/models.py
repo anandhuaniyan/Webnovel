@@ -187,6 +187,28 @@ Index(
 )
 
 
+class NovelVisualProfile(TimestampMixin, Base):
+    __tablename__ = "novel_visual_profiles"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    novel_id: Mapped[int] = mapped_column(
+        ForeignKey("novels.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    historical_period: Mapped[str | None] = mapped_column(String(255))
+    environments: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    recurring_characters: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    atmosphere: Mapped[str | None] = mapped_column(String(500))
+    illustration_style: Mapped[str] = mapped_column(
+        String(255), default="cinematic editorial storybook illustration", nullable=False
+    )
+    lighting_style: Mapped[str] = mapped_column(
+        String(255), default="naturalistic period-appropriate light", nullable=False
+    )
+    color_palette: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    visual_motifs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    prompt_constraints: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+
+
 class Chapter(TimestampMixin, Base):
     __tablename__ = "chapters"
     __table_args__ = (
@@ -375,12 +397,37 @@ class NovelImage(TimestampMixin, Base):
 
 class ChapterImage(TimestampMixin, Base):
     __tablename__ = "chapter_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "chapter_id",
+            "image_type",
+            "placement_order",
+            name="uq_chapter_images_placement",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"), index=True)
+    image_type: Mapped[str] = mapped_column(String(40), default="hero", nullable=False)
+    placement_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    paragraph_anchor: Mapped[int | None] = mapped_column(Integer)
     path: Mapped[str] = mapped_column(String(1000))
+    fallback_path: Mapped[str | None] = mapped_column(String(1000))
     alt_text: Mapped[str] = mapped_column(String(500))
+    generation_prompt: Mapped[str | None] = mapped_column(Text)
+    generation_provider: Mapped[str | None] = mapped_column(String(120))
+    generation_model: Mapped[str | None] = mapped_column(String(120))
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_status: Mapped[str] = mapped_column(
+        String(40), default="ORIGINAL_GENERATED", nullable=False
+    )
+    width: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), default="image/webp", nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    animation_type: Mapped[str] = mapped_column(String(40), default="none", nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    prompt_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 

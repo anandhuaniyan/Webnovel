@@ -32,6 +32,8 @@ def test_migration_created_required_tables() -> None:
         "editions",
         "novels",
         "chapters",
+        "chapter_images",
+        "novel_visual_profiles",
         "genres",
         "sources",
         "rights_records",

@@ -65,6 +65,22 @@ def test_temporary_cleanup_never_targets_other_categories(tmp_path: Path) -> Non
     assert protected.exists()
 
 
+def test_temporary_cleanup_preserves_repository_sentinel(tmp_path: Path) -> None:
+    service = StorageService()
+    service.root = tmp_path
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    sentinel = temporary / ".gitkeep"
+    sentinel.write_text("", encoding="utf-8")
+    os.utime(sentinel, (1, 1))
+    service.categories = {"temporary": temporary}
+
+    result = service.cleanup_temporary_files(older_than_hours=1)
+
+    assert result["removed"] == 0
+    assert sentinel.exists()
+
+
 def test_download_promotion_handles_cross_device_mounts(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -114,3 +130,21 @@ def test_illustration_modes_are_conservative() -> None:
     assert should(IllustrationMode.EVERY_5_CHAPTERS.value, 10)
     assert not should(IllustrationMode.EVERY_10_CHAPTERS.value, 5)
     assert should(IllustrationMode.AI_SELECTED.value, 3, ai_selected=True)
+
+
+def test_illustration_plan_is_adaptive_and_uses_paragraph_boundaries() -> None:
+    chapter = SimpleNamespace(
+        word_count=7_500,
+        content_text="Rain moved over the old house.",
+        content_html="".join(
+            f"<p>Paragraph {index} ends at a safe narrative boundary.</p>"
+            for index in range(30)
+        ),
+    )
+
+    plan = ChapterIllustrationService.placement_plan(chapter)
+
+    assert [item.image_type for item in plan] == ["hero", "interval", "interval", "interval"]
+    assert plan[0].paragraph_anchor is None
+    assert all(2 <= item.paragraph_anchor <= 28 for item in plan[1:])
+    assert plan[0].animation_type == "drift"

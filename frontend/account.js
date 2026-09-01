@@ -15,7 +15,7 @@ async function request(path, options = {}) {
 
 async function showLibrary() {
   try {
-    const [user, library] = await Promise.all([request('/api/me'), request('/api/me/library')]);
+    const [user, library, progress, bookmarks, history] = await Promise.all([request('/api/me'), request('/api/me/library'), request('/api/me/continue-reading'), request('/api/me/bookmarks'), request('/api/me/history')]);
     authPanels.hidden = true;
     libraryPanel.hidden = false;
     document.querySelector('#account-name').textContent = `${user.display_name}'s saved worlds`;
@@ -32,6 +32,31 @@ async function showLibrary() {
       return row;
     }));
     document.querySelector('#library-empty').hidden = library.length > 0;
+    document.querySelector('#continue-list').replaceChildren(...progress.map((item) => {
+      const row = document.createElement('li'); const link = document.createElement('a');
+      link.href = item.chapter ? `/novels/${encodeURIComponent(item.novel.slug)}/chapters/${encodeURIComponent(item.chapter.slug)}` : `/novels/${encodeURIComponent(item.novel.slug)}`;
+      link.textContent = item.chapter ? `${item.novel.title} · ${item.chapter.title}` : item.novel.title;
+      const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = `${Math.round(Number(item.position_percent))}%`;
+      row.append(link, badge); return row;
+    }));
+    document.querySelector('#continue-empty').hidden = progress.length > 0;
+    document.querySelector('#bookmark-list').replaceChildren(...bookmarks.map((item) => {
+      const row = document.createElement('li'); const link = document.createElement('a');
+      link.href = `/novels/${encodeURIComponent(item.novel.slug)}/chapters/${encodeURIComponent(item.chapter.slug)}`;
+      link.textContent = `${item.novel.title} · ${item.chapter.title}`;
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button button-small button-ghost'; remove.textContent = 'Remove';
+      remove.addEventListener('click', async () => { await request(`/api/me/bookmarks/${item.id}`, { method: 'DELETE' }); showLibrary(); });
+      row.append(link, remove); return row;
+    }));
+    document.querySelector('#bookmark-empty').hidden = bookmarks.length > 0;
+    document.querySelector('#history-list').replaceChildren(...history.map((item) => {
+      const row = document.createElement('li'); const link = document.createElement('a');
+      link.href = item.chapter ? `/novels/${encodeURIComponent(item.novel.slug)}/chapters/${encodeURIComponent(item.chapter.slug)}` : `/novels/${encodeURIComponent(item.novel.slug)}`;
+      link.textContent = item.chapter ? `${item.novel.title} · ${item.chapter.title}` : item.novel.title;
+      const timestamp = document.createElement('time'); timestamp.dateTime = item.read_at; timestamp.textContent = new Date(item.read_at).toLocaleDateString();
+      row.append(link, timestamp); return row;
+    }));
+    document.querySelector('#history-empty').hidden = history.length > 0;
   } catch {
     sessionStorage.removeItem(TOKEN_KEY);
     authPanels.hidden = false;
@@ -63,3 +88,7 @@ document.querySelector('#register-form').addEventListener('submit', async (event
 
 document.querySelector('#sign-out').addEventListener('click', () => { sessionStorage.removeItem(TOKEN_KEY); showLibrary(); });
 showLibrary();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+}

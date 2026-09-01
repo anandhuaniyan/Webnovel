@@ -6,6 +6,7 @@ import math
 from xml.sax.saxutils import escape
 
 import nh3
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from sqlalchemy import func, select, text
@@ -16,6 +17,7 @@ from app.core.database import get_db
 from app.models import (
     Author,
     Chapter,
+    ChapterImage,
     ContactRequest,
     Genre,
     Novel,
@@ -24,6 +26,7 @@ from app.models import (
     Source,
     SourceItem,
     TakedownRequest,
+    Work,
 )
 from app.services.catalog import publication_filter
 
@@ -169,7 +172,15 @@ def _asset_url(path: str | None) -> str | None:
     return f"/media/{normalized.lstrip('/')}"
 
 
-def _document(title: str, description: str, canonical: str, body: str, structured_data: dict) -> str:
+def _document(
+    title: str,
+    description: str,
+    canonical: str,
+    body: str,
+    structured_data: dict,
+    *,
+    scripts: str = "",
+) -> str:
     base = get_settings().public_base_url.rstrip("/")
     structured = json.dumps(structured_data, ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
@@ -178,10 +189,49 @@ def _document(title: str, description: str, canonical: str, body: str, structure
 <meta name="description" content="{html.escape(description[:320], quote=True)}">
 <meta property="og:title" content="{html.escape(title, quote=True)}"><meta property="og:description" content="{html.escape(description[:320], quote=True)}">
 <meta property="og:type" content="book"><meta property="og:url" content="{html.escape(canonical, quote=True)}">
-<link rel="canonical" href="{html.escape(canonical, quote=True)}"><link rel="stylesheet" href="/reader.css?v=20260829">
+<link rel="canonical" href="{html.escape(canonical, quote=True)}"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg" type="image/svg+xml"><meta name="theme-color" content="#204b3b"><link rel="stylesheet" href="/reader.css?v=20260901-3">
 <script type="application/ld+json">{structured}</script></head>
 <body><header class="site-header"><a class="brand" href="/" aria-label="Webnovel home">W <span>Webnovel</span></a><nav><a href="/">Discover</a><a href="/account">Account</a></nav></header>
-{body}<footer><p>Complete fiction, independently reviewed for rights and integrity.</p><nav><a href="/about">About</a><a href="/copyright">Copyright &amp; sources</a><a href="/privacy">Privacy</a><a href="/takedown">Takedown</a></nav><small>© Webnovel · {html.escape(base)}</small></footer></body></html>"""
+{body}<footer><p>Complete fiction, independently reviewed for rights and integrity.</p><nav><a href="/about">About</a><a href="/copyright">Copyright &amp; sources</a><a href="/privacy">Privacy</a><a href="/takedown">Takedown</a></nav><small>© Webnovel · {html.escape(base)}</small></footer>{scripts}</body></html>"""
+
+
+def _artwork_markup(image: ChapterImage, *, hero: bool = False) -> str:
+    animation = image.animation_type if image.animation_type in {
+        "none",
+        "slow_zoom",
+        "drift",
+        "parallax",
+        "light_flicker",
+        "water",
+    } else "none"
+    source = _asset_url(image.path)
+    if not source:
+        return ""
+    loading = "eager" if hero else "lazy"
+    priority = ' fetchpriority="high"' if hero else ""
+    classes = "chapter-artwork chapter-artwork-hero" if hero else "chapter-artwork"
+    return (
+        f'<figure class="{classes} artwork-{animation}" data-animation="{animation}">'
+        f'<div class="artwork-frame"><img src="{html.escape(source, quote=True)}" '
+        f'alt="{html.escape(image.alt_text, quote=True)}" loading="{loading}" decoding="async" '
+        f'width="{max(image.width, 1)}" height="{max(image.height, 1)}"{priority}></div></figure>'
+    )
+
+
+def _render_chapter_content(content_html: str, interval_images: list[ChapterImage]) -> str:
+    clean_content = nh3.clean(content_html)
+    if not interval_images:
+        return clean_content
+    soup = BeautifulSoup(clean_content, "lxml")
+    paragraphs = soup.select("p")
+    for image in sorted(interval_images, key=lambda item: item.placement_order, reverse=True):
+        if not image.paragraph_anchor or not paragraphs:
+            continue
+        anchor = min(max(image.paragraph_anchor, 1), len(paragraphs)) - 1
+        fragment = BeautifulSoup(_artwork_markup(image), "html.parser").figure
+        if fragment:
+            paragraphs[anchor].insert_after(fragment)
+    return soup.body.decode_contents() if soup.body else str(soup)
 
 
 def _published_novel(db: Session, slug: str) -> Novel:
@@ -224,6 +274,7 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
         .where(NovelGenre.novel_id == novel.id)
         .order_by(NovelGenre.is_primary.desc(), Genre.name)
     ).all()
+    work = db.get(Work, novel.work_id)
     chapters = db.scalars(
         select(Chapter).where(Chapter.novel_id == novel.id).order_by(Chapter.chapter_order)
     ).all()
@@ -272,6 +323,36 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
     first_link = (
         f"/novels/{novel.slug}/chapters/{chapters[0].chapter_slug}" if chapters else f"/novels/{novel.slug}"
     )
+    related = []
+    if genres:
+        related = list(
+            db.scalars(
+                select(Novel)
+                .join(NovelGenre, NovelGenre.novel_id == Novel.id)
+                .where(
+                    NovelGenre.genre_id.in_([genre.id for genre in genres]),
+                    Novel.id != novel.id,
+                    *publication_filter(),
+                )
+                .group_by(Novel.id)
+                .order_by(func.count(NovelGenre.genre_id).desc(), Novel.average_rating.desc())
+                .limit(6)
+            ).all()
+        )
+    related_author_ids = {item.primary_author_id for item in related if item.primary_author_id}
+    related_authors = (
+        {
+            item.id: item
+            for item in db.scalars(select(Author).where(Author.id.in_(related_author_ids))).all()
+        }
+        if related_author_ids
+        else {}
+    )
+    related_markup = (
+        f'<section class="related-books"><h2>Related reading</h2><div class="book-grid">{_book_cards(related, related_authors)}</div></section>'
+        if related
+        else ""
+    )
     enhancements = "".join(
         f"<section><h2>{label}</h2><p>{html.escape(value)}</p></section>"
         for label, value in (
@@ -294,10 +375,12 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
             f'Source edition: <a rel="nofollow noopener" href="{html.escape(source_item.source_url, quote=True)}">{html.escape(source.name)}</a>'
         )
     rights_markup = " · ".join(rights_details) or "Rights evidence is retained in the publication record."
-    body = f"""<main class="book-page"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <span>{html.escape(novel.title)}</span></nav>
-<section class="book-hero">{cover_markup}<div><p class="eyebrow">Complete · Rights reviewed</p><h1>{html.escape(novel.title)}</h1><p class="byline">by {author_markup}</p><div class="pills">{genre_markup}</div><p>{html.escape(description)}</p><dl class="facts"><div><dt>Chapters</dt><dd>{novel.chapter_count:,}</dd></div><div><dt>Words</dt><dd>{novel.total_words:,}</dd></div><div><dt>Reading time</dt><dd>{novel.estimated_reading_minutes:,} min</dd></div></dl><a class="primary-action" href="{html.escape(first_link)}">Start reading</a></div></section>
+    publication_year = work.first_publication_year if work else None
+    rating_text = f"{novel.average_rating} / 5 ({novel.rating_count:,})" if novel.rating_count else "Not yet rated"
+    body = f"""<main class="book-page" data-novel-page data-novel-id="{novel.id}"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <span>{html.escape(novel.title)}</span></nav>
+<section class="book-hero">{cover_markup}<div><p class="eyebrow">Complete · Rights reviewed</p><h1>{html.escape(novel.title)}</h1><p class="byline">by {author_markup}</p><div class="pills">{genre_markup}</div><p>{html.escape(description)}</p><dl class="facts"><div><dt>Chapters</dt><dd>{novel.chapter_count:,}</dd></div><div><dt>Words</dt><dd>{novel.total_words:,}</dd></div><div><dt>Reading time</dt><dd>{novel.estimated_reading_minutes:,} min</dd></div><div><dt>Language</dt><dd>{html.escape(novel.language.upper())}</dd></div><div><dt>First published</dt><dd>{publication_year or "Unknown"}</dd></div><div><dt>Reader rating</dt><dd>{html.escape(rating_text)}</dd></div></dl><div class="book-actions"><a class="primary-action" id="novel-reading-action" href="{html.escape(first_link)}">Start reading</a><button class="secondary-action" id="novel-library-action" type="button">Add to library</button></div><p class="reader-status" id="novel-action-status" aria-live="polite"></p></div></section>
 <div class="book-columns"><div>{enhancements}<section class="rights"><h2>Copyright and source</h2><p><strong>{rights_status}</strong> · {rights_markup}</p><p>The selected edition passed manual, jurisdiction-specific review. Source availability alone is never treated as permission.</p></section></div>
-<section><h2>Contents</h2><ol class="chapter-list">{chapter_markup}</ol></section></div></main>"""
+<section><h2>Contents</h2><ol class="chapter-list">{chapter_markup}</ol></section></div>{related_markup}</main>"""
     structured = {
         "@context": "https://schema.org",
         "@graph": [
@@ -325,7 +408,16 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
             },
         ],
     }
-    return HTMLResponse(_document(novel.seo_title or novel.title, description, canonical, body, structured))
+    return HTMLResponse(
+        _document(
+            novel.seo_title or novel.title,
+            description,
+            canonical,
+            body,
+            structured,
+            scripts='<script src="/novel.js?v=20260901" defer></script>',
+        )
+    )
 
 
 @router.get("/novels/{slug}/chapters/{chapter_slug}", response_class=HTMLResponse)
@@ -356,10 +448,32 @@ def chapter_page(slug: str, chapter_slug: str, db: Session = Depends(get_db)) ->
     next_link = (
         f"/novels/{novel.slug}/chapters/{following.chapter_slug}" if following else f"/novels/{novel.slug}"
     )
-    clean_content = nh3.clean(chapter.content_html)
-    body = f"""<main class="reader-page"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/novels/{html.escape(novel.slug)}">{html.escape(novel.title)}</a> / <span>{html.escape(chapter.chapter_title)}</span></nav>
+    illustrations = db.scalars(
+        select(ChapterImage)
+        .where(ChapterImage.chapter_id == chapter.id, ChapterImage.approved.is_(True))
+        .order_by(ChapterImage.placement_order)
+    ).all()
+    hero = next((image for image in illustrations if image.image_type == "hero"), None)
+    intervals = [image for image in illustrations if image.image_type == "interval"]
+    clean_content = _render_chapter_content(chapter.content_html, intervals)
+    all_chapters = db.scalars(
+        select(Chapter).where(Chapter.novel_id == novel.id).order_by(Chapter.chapter_order)
+    ).all()
+    chapter_options = "".join(
+        f'<option value="/novels/{html.escape(novel.slug)}/chapters/{html.escape(item.chapter_slug)}"'
+        f'{" selected" if item.id == chapter.id else ""}>'
+        f'{item.chapter_order}. {html.escape(item.chapter_title)}</option>'
+        for item in all_chapters
+    )
+    hero_markup = _artwork_markup(hero, hero=True) if hero else ""
+    previous_url = f"/novels/{novel.slug}/chapters/{previous.chapter_slug}" if previous else ""
+    following_url = f"/novels/{novel.slug}/chapters/{following.chapter_slug}" if following else ""
+    body = f"""<progress class="reading-progress" id="reading-progress" max="100" value="0" aria-label="Chapter reading progress"></progress>
+<main class="reader-page" data-reader data-novel-id="{novel.id}" data-chapter-id="{chapter.id}" data-reading-minutes="{chapter.estimated_reading_minutes}" data-previous-url="{html.escape(previous_url, quote=True)}" data-next-url="{html.escape(following_url, quote=True)}"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/novels/{html.escape(novel.slug)}">{html.escape(novel.title)}</a> / <span>{html.escape(chapter.chapter_title)}</span></nav>
+<aside class="reader-tools" aria-label="Reading controls"><button id="reader-settings-toggle" type="button" aria-label="Reading settings" aria-controls="reader-settings" aria-expanded="false">Aa <span>Reading settings</span></button><button id="reader-bookmark" type="button" aria-label="Bookmark this chapter">♡ <span>Bookmark</span></button><button id="reader-fullscreen" type="button" aria-label="Toggle focus mode">⛶ <span>Focus</span></button></aside>
+<section class="reader-settings" id="reader-settings" aria-label="Reading settings" hidden><div class="settings-heading"><h2>Reading settings</h2><button id="reader-settings-close" type="button" aria-label="Close reading settings">×</button></div><label>Typeface<select id="reader-font"><option value="serif">Classic serif</option><option value="sans-serif">Clean sans</option><option value="dyslexic">Accessible sans</option></select></label><label>Text size <output id="reader-font-output">100%</output><input id="reader-font-scale" type="range" min="80" max="180" step="5" value="100"></label><label>Line spacing <output id="reader-line-output">1.85</output><input id="reader-line-height" type="range" min="130" max="240" step="5" value="185"></label><label>Text width <output id="reader-width-output">760px</output><input id="reader-content-width" type="range" min="480" max="1100" step="20" value="760"></label><fieldset><legend>Theme</legend><div class="theme-options"><button type="button" data-reader-theme="light">Light</button><button type="button" data-reader-theme="sepia">Sepia</button><button type="button" data-reader-theme="dark">Dark</button></div></fieldset></section>
 <header class="chapter-header"><p class="eyebrow">Chapter {chapter.chapter_order} of {novel.chapter_count}</p><h1>{html.escape(chapter.chapter_title)}</h1><p>{chapter.word_count:,} words · about {chapter.estimated_reading_minutes} minutes</p></header>
-<article class="prose">{clean_content}</article><nav class="chapter-nav"><a rel="prev" href="{html.escape(prev_link)}">← Previous</a><a href="/novels/{html.escape(novel.slug)}">Contents</a><a rel="next" href="{html.escape(next_link)}">Next →</a></nav></main>"""
+{hero_markup}<p class="reader-status" id="reader-status" aria-live="polite"><span id="reader-percent">0% complete</span><span id="reader-time">About {chapter.estimated_reading_minutes} minutes left</span></p><article class="prose" id="chapter-content">{clean_content}</article><section class="chapter-jump"><label for="chapter-select">Jump to chapter</label><select id="chapter-select">{chapter_options}</select></section><nav class="chapter-nav"><a rel="prev" href="{html.escape(prev_link)}">← Previous</a><a href="/novels/{html.escape(novel.slug)}">Contents</a><a rel="next" href="{html.escape(next_link)}">Next →</a></nav></main>"""
     structured = {
         "@context": "https://schema.org",
         "@type": "Chapter",
@@ -375,6 +489,7 @@ def chapter_page(slug: str, chapter_slug: str, db: Session = Depends(get_db)) ->
             canonical,
             body,
             structured,
+            scripts='<script src="/reader.js?v=20260901" defer></script>',
         )
     )
 

@@ -4,7 +4,9 @@ Webnovel is an isolated, copyright-first publishing system. Nginx serves the exi
 
 The content boundary is `WORK → EDITION → SOURCE`. A work describes the intellectual work, an edition captures language/translator/publisher differences, and source items preserve provider identifiers and downloads. The public `Novel` selects one edition. False-negative duplicates can be linked to a canonical work and novel without deleting their provenance; future discovery follows that canonical link. This avoids treating two translations as interchangeable or a second repository copy as a new novel.
 
-The public boundary is deliberately narrow. Every public query applies the same publication filter: `published=true`, no canonical merge target, `completeness_status=COMPLETE`, and an approved rights status. Final publication also requires current independent rights evidence, no blocking quality issues, readable chapters, and an approved original cover. Admin and worker operations are separate from reader APIs.
+The public boundary is deliberately narrow. Every public query applies the same publication filter: `published=true`, no canonical merge target, `completeness_status=COMPLETE`, and an approved rights status. Final publication also requires current independent rights evidence, no blocking quality issues, readable chapters, and an approved original cover. Chapter images have an additional approval boundary: unapproved records are never returned by public HTML or JSON routes. Admin and worker operations are separate from reader APIs.
+
+Artwork is generated offline by retryable Celery tasks, optimized locally, and described by `NovelVisualProfile` and placement-rich `ChapterImage` records. Public chapter rendering injects approved interval art only after stored paragraph anchors, reserves intrinsic dimensions to prevent layout shift, and uses CSS motion with static-file fallbacks. No request-time image generation or remote artwork hotlinking exists.
 
 All persistent paths, Compose labels, ports, containers, volumes, and the database identity are guarded by the preflight and migration scripts. See `ISOLATION.md`.
 
