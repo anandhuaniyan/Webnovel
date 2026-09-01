@@ -6,7 +6,7 @@ Local startup from the exact project root is:
 .\scripts\start.ps1
 ```
 
-The script selects unused ports without terminating owners, validates isolation and Compose, builds images, starts only project PostgreSQL/Redis, verifies database identity, runs Alembic, then starts backend, worker, scheduler, and frontend. Optional MinIO uses `-WithStorage`. Stop with `scripts/stop.ps1`; volumes are retained.
+The script selects unused ports without terminating owners, detects the physical LAN IPv4 address, validates isolation and Compose, builds images, starts only project PostgreSQL/Redis, verifies database identity, runs Alembic, then starts backend, worker, scheduler, and frontend. It validates both localhost and LAN same-origin health before printing the exact phone/tablet URL. Optional MinIO uses `-WithStorage`. Stop with `scripts/stop.ps1`; volumes are retained. See `LAN_ACCESS.md` for the narrowly scoped Windows Firewall rule and router client-isolation guidance.
 
 For production, use unique secrets from a secret manager, HTTPS/reverse proxy, managed PostgreSQL with backups/PITR, managed Redis, S3-compatible versioned object storage, restricted network access, centralized logs/metrics, health checks, worker autoscaling, and a single migration job. Disable API docs, set the real public origin, configure email/privacy contacts, and keep AdSense/Analytics off until consent and account configuration are complete.
 

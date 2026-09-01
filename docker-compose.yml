@@ -12,7 +12,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${WEBNOVEL_FRONTEND_HOST:-127.0.0.1}:${WEBNOVEL_FRONTEND_PORT:?WEBNOVEL_FRONTEND_PORT is required}:80"
+      - "${WEBNOVEL_FRONTEND_HOST:-0.0.0.0}:${WEBNOVEL_FRONTEND_PORT:?WEBNOVEL_FRONTEND_PORT is required}:80"
     labels:
       com.webnovel.project: webnovel_platform
       com.webnovel.component: frontend

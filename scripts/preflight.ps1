@@ -98,6 +98,11 @@ $expectedValues = @{
     WEBNOVEL_POSTGRES_CONTAINER = 'webnovel_postgres'
     WEBNOVEL_REDIS_CONTAINER = 'webnovel_redis'
     WEBNOVEL_STORAGE_CONTAINER = 'webnovel_storage'
+    WEBNOVEL_FRONTEND_HOST = '0.0.0.0'
+    WEBNOVEL_BACKEND_HOST = '127.0.0.1'
+    WEBNOVEL_POSTGRES_HOST = '127.0.0.1'
+    WEBNOVEL_REDIS_HOST = '127.0.0.1'
+    WEBNOVEL_STORAGE_HOST = '127.0.0.1'
 }
 foreach ($key in $expectedValues.Keys) {
     if (-not $environment.ContainsKey($key) -or $environment[$key] -ne $expectedValues[$key]) {

@@ -20,6 +20,8 @@ Source, configuration, local databases, runtime storage, logs, backups, generate
 
 The named volumes use bind-backed directories under `database` and `storage`, so persistent data remains inside the fixed root. Nothing connects to an external Docker network.
 
+Only the frontend is published to the private LAN (`0.0.0.0` on its selected port). The direct backend, PostgreSQL, Redis, and optional storage ports remain bound to `127.0.0.1`; browser API requests are proxied through frontend Nginx over `webnovel_network`.
+
 ## Operational rules
 
 1. Run project scripts from the fixed root only.

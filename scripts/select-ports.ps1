@@ -23,6 +23,8 @@ if (-not (Test-Path -LiteralPath $EnvPath -PathType Leaf)) {
     throw "Port selection aborted: missing '$EnvPath'."
 }
 
+. (Join-Path $PSScriptRoot 'network.ps1')
+
 function Read-DotEnv {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -163,7 +165,14 @@ if ([string]::IsNullOrWhiteSpace($databaseUser) -or
 $encodedDatabaseUser = [System.Uri]::EscapeDataString($databaseUser)
 $encodedDatabasePassword = [System.Uri]::EscapeDataString($databasePassword)
 $encodedRedisPassword = [System.Uri]::EscapeDataString($redisPassword)
-$updates['WEBNOVEL_FRONTEND_URL'] = "http://localhost:$($updates['WEBNOVEL_FRONTEND_PORT'])"
+$lanAddress = Get-WebnovelLanIPv4Address
+$publicHost = if ([string]::IsNullOrWhiteSpace($lanAddress)) { 'localhost' } else { $lanAddress }
+$updates['WEBNOVEL_FRONTEND_HOST'] = '0.0.0.0'
+$updates['WEBNOVEL_BACKEND_HOST'] = '127.0.0.1'
+$updates['WEBNOVEL_POSTGRES_HOST'] = '127.0.0.1'
+$updates['WEBNOVEL_REDIS_HOST'] = '127.0.0.1'
+$updates['WEBNOVEL_STORAGE_HOST'] = '127.0.0.1'
+$updates['WEBNOVEL_FRONTEND_URL'] = "http://${publicHost}:$($updates['WEBNOVEL_FRONTEND_PORT'])"
 $updates['WEBNOVEL_BACKEND_URL'] = "http://localhost:$($updates['WEBNOVEL_BACKEND_PORT'])"
 $updates['WEBNOVEL_DATABASE_URL'] = "postgresql://${encodedDatabaseUser}:${encodedDatabasePassword}@127.0.0.1:$($updates['WEBNOVEL_POSTGRES_PORT'])/$databaseName"
 $updates['WEBNOVEL_REDIS_URL'] = "redis://:${encodedRedisPassword}@127.0.0.1:$($updates['WEBNOVEL_REDIS_PORT'])/0"

@@ -4,16 +4,16 @@ Webnovel is an isolated, copyright-first literature platform behind the existing
 
 Every project file and persistent local path is rooted at `C:\Users\anadh\Development\Webnovel`. It does not share ports, networks, volumes, credentials, or configuration with another project.
 
-## Reserved local endpoints
+## Reserved endpoints
 
-- Frontend: `http://localhost:5273`
-- Backend API: `http://localhost:8270`
+- Frontend: `0.0.0.0:5273` (host PC and private LAN)
+- Backend API: `127.0.0.1:8270` (host PC only; browsers use frontend `/api`)
 - PostgreSQL: `127.0.0.1:55432`
 - Redis: `127.0.0.1:56379`
 - Optional MinIO API: `127.0.0.1:59000`
 - Optional MinIO console: `127.0.0.1:59001`
 
-These are recorded in `.env`. `scripts\select-ports.ps1` replaces any occupied port with an unused one and updates dependent URLs before startup. It never terminates the process that owns an occupied port.
+These are recorded in `.env`. `scripts\select-ports.ps1` replaces any occupied port with an unused one, detects the active physical LAN IPv4 address, and updates dependent URLs before startup. It never terminates the process that owns an occupied port. PostgreSQL, Redis, the backend, and optional MinIO ports remain bound to loopback.
 
 ## Safe startup
 
@@ -21,8 +21,11 @@ Run all commands from the project root:
 
 ```powershell
 cd C:\Users\anadh\Development\Webnovel
+.\scripts\configure-lan-firewall.ps1
 .\scripts\start.ps1
 ```
+
+Run the firewall command once from an Administrator PowerShell. It creates only a Private-profile inbound TCP rule for port 5273; it does not disable Windows Firewall or open backend, database, Redis, or storage ports.
 
 To include the optional local object store:
 
@@ -38,13 +41,16 @@ Stop only this project's containers:
 
 The stop script does not remove volumes. Never use global Docker cleanup commands for this project.
 
-After startup:
+After startup the script prints the detected URLs. With a host LAN address such as `192.168.4.21`:
 
 - Website: `http://localhost:5273`
-- API health: `http://localhost:8270/health`
+- Phone/tablet: `http://192.168.4.21:5273`
+- Same-origin API health: `http://192.168.4.21:5273/api/health`
 - API docs (development): `http://localhost:8270/api/docs`
 - Account: `http://localhost:5273/account`
 - Admin: `http://localhost:5273/admin`
+
+The LAN address is detected at startup and is never hard-coded. Devices must be on the same private LAN/Wi-Fi. Guest-network or router client-isolation settings can prevent device-to-device access and must be changed in the router rather than in this project. See `docs\LAN_ACCESS.md`.
 
 The current local deployment contains 3 independently reviewed public-domain works with 209 complete chapters. The initial 20-candidate discovery checkpoint is retained for staged rights review; the remaining candidates stay unpublished until a human verifies their rights evidence. Nothing is published merely because it was discovered or downloaded.
 
