@@ -7,7 +7,10 @@ from app.services.sources.base import SourceAdapter, SourceCandidate
 
 class GutenbergAdapter(SourceAdapter):
     code = "gutenberg"
-    api_url = "https://gutendex.com/books"
+    # Gutendex redirects the non-canonical path to its trailing-slash URL. In
+    # some container/network combinations that redirect can stall even though
+    # the canonical endpoint is healthy, so call it directly.
+    api_url = "https://gutendex.com/books/"
 
     async def discover(self, *, page: int = 1, query: str | None = None) -> list[SourceCandidate]:
         params: dict[str, str | int] = {"page": page}
@@ -20,7 +23,7 @@ class GutenbergAdapter(SourceAdapter):
 
     async def fetch_metadata(self, external_id: str) -> SourceCandidate:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            response = await client.get(f"{self.api_url}/{external_id}")
+            response = await client.get(f"{self.api_url}{external_id}/")
             response.raise_for_status()
         return self._candidate(response.json())
 
@@ -45,7 +48,7 @@ class GutenbergAdapter(SourceAdapter):
             subjects=tuple(item.get("subjects", [])),
             bookshelves=tuple(item.get("bookshelves", [])),
             source_url=f"https://www.gutenberg.org/ebooks/{external_id}",
-            metadata_url=f"{self.api_url}/{external_id}",
+            metadata_url=f"{self.api_url}{external_id}/",
             download_url=formats.get(download_type) if download_type else None,
             media_type=download_type,
             licence_name="Project Gutenberg licence; jurisdiction review required",
