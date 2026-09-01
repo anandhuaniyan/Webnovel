@@ -89,6 +89,7 @@ def detail_for(db: Session, novel: Novel) -> NovelDetail:
                 "licence_name": rights.licence_name,
                 "licence_url": rights.licence_url,
                 "attribution": rights.attribution_text,
+                "verification": "Rights reviewed",
                 "verified_at": rights.verified_at,
                 "next_review_at": rights.next_review_at,
             }

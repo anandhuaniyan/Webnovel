@@ -32,6 +32,8 @@ from app.models import (
     Review,
     RightsEvidence,
     RightsRecord,
+    RightsReviewer,
+    Source,
     SourceItem,
     TakedownRequest,
     Work,
@@ -64,10 +66,30 @@ class RightsApproval(BaseModel):
     licence_url: str | None = None
     attribution_text: str | None = None
     verification_method: str = Field(min_length=10, max_length=255)
-    verified_by: str = Field(min_length=2, max_length=255)
+    reviewer_id: int = Field(gt=0)
     evidence_url: str | None = None
     evidence_description: str = Field(min_length=20, max_length=5000)
     review_interval_days: int = Field(default=365, ge=30, le=3650)
+
+
+class RightsResearchUpdate(BaseModel):
+    research_method: str = Field(min_length=5, max_length=120)
+    research_provider: str = Field(min_length=2, max_length=120)
+    research_summary: str = Field(min_length=40, max_length=10_000)
+    evidence_url: str | None = Field(default=None, max_length=1500)
+    evidence_description: str = Field(min_length=20, max_length=5000)
+
+
+class RightsReviewerCreate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=255)
+    reviewer_type: str = Field(default="INTERNAL", pattern="^(INTERNAL|EXTERNAL)$")
+
+
+class RightsReviewAction(BaseModel):
+    reviewer_id: int = Field(gt=0)
+    verification_method: str = Field(min_length=10, max_length=255)
+    evidence_url: str | None = Field(default=None, max_length=1500)
+    evidence_description: str = Field(min_length=20, max_length=5000)
 
 
 class AdminAction(BaseModel):
@@ -269,8 +291,22 @@ def rights_queue(limit: int = Query(default=100, ge=1, le=500), db: Session = De
         .order_by(RightsRecord.updated_at)
         .limit(limit)
     ).all()
-    return [
-        {
+    result = []
+    for record, novel in rows:
+        reviewer = db.get(RightsReviewer, record.reviewer_id) if record.reviewer_id else None
+        source_row = db.execute(
+            select(SourceItem, Source)
+            .join(Source, Source.id == SourceItem.source_id)
+            .where(SourceItem.edition_id == record.edition_id)
+            .limit(1)
+        ).first()
+        source_item, source = source_row if source_row else (None, None)
+        evidence = db.scalars(
+            select(RightsEvidence)
+            .where(RightsEvidence.rights_record_id == record.id)
+            .order_by(RightsEvidence.captured_at)
+        ).all()
+        result.append({
             "rights_record_id": record.id,
             "novel_id": novel.id,
             "edition_id": record.edition_id,
@@ -280,9 +316,150 @@ def rights_queue(limit: int = Query(default=100, ge=1, le=500), db: Session = De
             "licence_claim": record.licence_name,
             "licence_url": record.licence_url,
             "notes": record.notes,
-        }
-        for record, novel in rows
+            "review_reference": record.review_reference,
+            "reviewer_visibility": record.reviewer_visibility,
+            "research_method": record.research_method,
+            "research_provider": record.research_provider,
+            "research_summary": record.research_summary,
+            "research_completed_at": record.research_completed_at,
+            "human_review_required": record.human_review_required,
+            "human_review_status": record.human_review_status,
+            "human_reviewer": (
+                {"id": reviewer.id, "display_name": reviewer.display_name, "type": reviewer.reviewer_type}
+                if reviewer else None
+            ),
+            "human_verified_at": record.verified_at,
+            "verification_method": record.verification_method,
+            "source": (
+                {"name": source.name, "code": source.code, "external_id": source_item.external_id,
+                 "url": source_item.source_url, "source_hash": source_item.source_hash}
+                if source_item and source else None
+            ),
+            "evidence": [
+                {"type": item.evidence_type, "source_url": item.source_url,
+                 "local_path": item.local_path, "description": item.description,
+                 "content_hash": item.content_hash, "captured_at": item.captured_at}
+                for item in evidence
+            ],
+        })
+    return result
+
+
+@router.get("/rights-reviewers")
+def rights_reviewers(db: Session = Depends(get_db)) -> list[dict]:
+    return [
+        {"id": reviewer.id, "display_name": reviewer.display_name,
+         "reviewer_type": reviewer.reviewer_type, "active": reviewer.active}
+        for reviewer in db.scalars(select(RightsReviewer).order_by(RightsReviewer.display_name)).all()
     ]
+
+
+@router.get("/rights/{record_id}")
+def rights_record_detail(record_id: int, db: Session = Depends(get_db)) -> dict:
+    record = db.get(RightsRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Rights record not found")
+    reviewer = db.get(RightsReviewer, record.reviewer_id) if record.reviewer_id else None
+    evidence = db.scalars(
+        select(RightsEvidence)
+        .where(RightsEvidence.rights_record_id == record.id)
+        .order_by(RightsEvidence.captured_at)
+    ).all()
+    return {
+        "rights_record_id": record.id,
+        "status": record.status,
+        "jurisdiction": record.jurisdiction,
+        "review_reference": record.review_reference,
+        "research_method": record.research_method,
+        "research_provider": record.research_provider,
+        "research_summary": record.research_summary,
+        "research_completed_at": record.research_completed_at,
+        "human_review_required": record.human_review_required,
+        "human_review_status": record.human_review_status,
+        "human_reviewer": (
+            {"id": reviewer.id, "display_name": reviewer.display_name,
+             "reviewer_type": reviewer.reviewer_type}
+            if reviewer else (
+                {"id": None, "display_name": record.verified_by, "reviewer_type": "LEGACY"}
+                if record.verified_by else None
+            )
+        ),
+        "human_verified_at": record.verified_at,
+        "verification_method": record.verification_method,
+        "reviewer_visibility": record.reviewer_visibility,
+        "next_review_at": record.next_review_at,
+        "notes": record.notes,
+        "evidence": [
+            {"type": item.evidence_type, "source_url": item.source_url,
+             "local_path": item.local_path, "description": item.description,
+             "content_hash": item.content_hash, "captured_at": item.captured_at}
+            for item in evidence
+        ],
+    }
+
+
+@router.post("/rights-reviewers", status_code=201)
+def create_rights_reviewer(payload: RightsReviewerCreate, db: Session = Depends(get_db)) -> dict:
+    reviewer = RightsReviewer(
+        display_name=payload.display_name.strip(),
+        reviewer_type=payload.reviewer_type,
+        active=True,
+    )
+    db.add(reviewer)
+    db.commit()
+    db.refresh(reviewer)
+    return {"id": reviewer.id, "display_name": reviewer.display_name,
+            "reviewer_type": reviewer.reviewer_type, "active": reviewer.active}
+
+
+@router.post("/rights/{record_id}/research")
+def attach_rights_research(
+    record_id: int, payload: RightsResearchUpdate, db: Session = Depends(get_db)
+) -> dict:
+    record = db.get(RightsRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Rights record not found")
+    completed_at = datetime.now(UTC)
+    record.research_method = payload.research_method
+    record.research_provider = payload.research_provider
+    record.research_summary = payload.research_summary
+    record.research_completed_at = completed_at
+    record.human_review_status = "PENDING"
+    record.manual_approval = False
+    record.reviewer_id = None
+    record.verified_at = None
+    record.next_review_at = None
+    if not record.review_reference:
+        record.review_reference = f"RIGHTS-{completed_at.year}-{record.id:05d}"
+    db.add(
+        RightsEvidence(
+            rights_record_id=record.id,
+            evidence_type="AI_ASSISTED_COPYRIGHT_RESEARCH",
+            source_url=payload.evidence_url,
+            description=payload.evidence_description,
+        )
+    )
+    db.add(
+        AuditLog(
+            actor_type="ADMIN_KEY",
+            action="RIGHTS_RESEARCH_RECORDED",
+            entity_type="rights_record",
+            entity_id=str(record.id),
+            details={"review_reference": record.review_reference,
+                     "research_method": record.research_method,
+                     "research_provider": record.research_provider},
+        )
+    )
+    db.commit()
+    return {"recorded": True, "review_reference": record.review_reference,
+            "research_completed_at": completed_at, "human_review_status": "PENDING"}
+
+
+def _active_reviewer(db: Session, reviewer_id: int) -> RightsReviewer:
+    reviewer = db.get(RightsReviewer, reviewer_id)
+    if not reviewer or not reviewer.active:
+        raise HTTPException(status_code=400, detail="An active private rights reviewer is required")
+    return reviewer
 
 
 @router.post("/rights/{record_id}/approve")
@@ -296,6 +473,7 @@ def approve_rights(record_id: int, payload: RightsApproval, db: Session = Depend
     record = db.get(RightsRecord, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Rights record not found")
+    reviewer = _active_reviewer(db, payload.reviewer_id)
     novel = db.scalar(select(Novel).where(Novel.work_id == record.work_id))
     if novel and novel.published and novel.edition_id != record.edition_id:
         raise HTTPException(
@@ -308,10 +486,16 @@ def approve_rights(record_id: int, payload: RightsApproval, db: Session = Depend
     record.licence_url = payload.licence_url
     record.attribution_text = payload.attribution_text
     record.verification_method = payload.verification_method
-    record.verified_by = payload.verified_by
+    record.reviewer_id = reviewer.id
+    record.verified_by = None
     record.verified_at = datetime.now(UTC)
     record.next_review_at = record.verified_at + timedelta(days=payload.review_interval_days)
     record.manual_approval = True
+    record.human_review_required = True
+    record.human_review_status = "APPROVED"
+    record.reviewer_visibility = "PRIVATE"
+    if not record.review_reference:
+        record.review_reference = f"RIGHTS-{record.verified_at.year}-{record.id:05d}"
 
     evidence_root = StorageService().safe_path("rights_evidence", f"manual/{record.id}")
     evidence_root.mkdir(parents=True, exist_ok=True)
@@ -321,7 +505,8 @@ def approve_rights(record_id: int, payload: RightsApproval, db: Session = Depend
             {
                 "source_url": payload.evidence_url,
                 "description": payload.evidence_description,
-                "verified_by": payload.verified_by,
+                "reviewer_id": reviewer.id,
+                "review_reference": record.review_reference,
                 "verified_at": record.verified_at.isoformat(),
                 "jurisdiction": record.jurisdiction,
                 "status": rights_status.value,
@@ -340,6 +525,7 @@ def approve_rights(record_id: int, payload: RightsApproval, db: Session = Depend
             content_hash=StorageService.sha256(evidence_path),
         )
     )
+    queued_job = None
     if novel:
         novel.edition_id = record.edition_id
         novel.rights_status = rights_status.value
@@ -352,26 +538,65 @@ def approve_rights(record_id: int, payload: RightsApproval, db: Session = Depend
         if job and job.status == ImportStatus.RIGHTS_CHECK.value:
             job.status = ImportStatus.RIGHTS_APPROVED.value
             job.checkpoint = "VERIFY_RIGHTS"
+            queued_job = job
     db.add(
         AuditLog(
             actor_type="ADMIN_KEY",
             action="RIGHTS_APPROVED",
             entity_type="rights_record",
             entity_id=str(record.id),
-            details=payload.model_dump(mode="json"),
+            details={"review_reference": record.review_reference, "reviewer_id": reviewer.id,
+                     "status": rights_status.value, "verification_method": payload.verification_method},
         )
     )
     db.commit()
-    return {"approved": True, "status": record.status, "next_review_at": record.next_review_at}
+    task = process_import.delay(queued_job.id) if queued_job else None
+    return {"approved": True, "status": record.status, "review_reference": record.review_reference,
+            "next_review_at": record.next_review_at, "pipeline_task_id": task.id if task else None}
 
 
-@router.post("/rights/{record_id}/reject")
-def reject_rights(record_id: int, payload: ModerationAction, db: Session = Depends(get_db)) -> dict:
+@router.post("/rights/{record_id}/needs-legal-review")
+def needs_legal_review(
+    record_id: int, payload: RightsReviewAction, db: Session = Depends(get_db)
+) -> dict:
     record = db.get(RightsRecord, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Rights record not found")
+    reviewer = _active_reviewer(db, payload.reviewer_id)
+    record.status = RightsStatus.NEEDS_LEGAL_REVIEW.value
+    record.human_review_status = "NEEDS_LEGAL_REVIEW"
+    record.manual_approval = False
+    record.reviewer_id = reviewer.id
+    record.verified_by = None
+    record.verification_method = payload.verification_method
+    record.verified_at = datetime.now(UTC)
+    record.next_review_at = None
+    record.reviewer_visibility = "PRIVATE"
+    db.add(RightsEvidence(rights_record_id=record.id, evidence_type="HUMAN_REVIEW_NEEDS_LEGAL",
+                          source_url=payload.evidence_url, description=payload.evidence_description))
+    db.add(AuditLog(actor_type="ADMIN_KEY", action="RIGHTS_NEEDS_LEGAL_REVIEW",
+                    entity_type="rights_record", entity_id=str(record.id),
+                    details={"review_reference": record.review_reference, "reviewer_id": reviewer.id}))
+    db.commit()
+    return {"needs_legal_review": True, "status": record.status,
+            "review_reference": record.review_reference}
+
+
+@router.post("/rights/{record_id}/reject")
+def reject_rights(record_id: int, payload: RightsReviewAction, db: Session = Depends(get_db)) -> dict:
+    record = db.get(RightsRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Rights record not found")
+    reviewer = _active_reviewer(db, payload.reviewer_id)
     record.status = RightsStatus.RESTRICTED.value
     record.manual_approval = False
+    record.human_review_status = "REJECTED"
+    record.reviewer_id = reviewer.id
+    record.verified_by = None
+    record.verification_method = payload.verification_method
+    record.verified_at = datetime.now(UTC)
+    record.next_review_at = None
+    record.reviewer_visibility = "PRIVATE"
     novel = db.scalar(select(Novel).where(Novel.edition_id == record.edition_id))
     if novel:
         novel.published = False
@@ -383,9 +608,11 @@ def reject_rights(record_id: int, payload: ModerationAction, db: Session = Depen
             action="RIGHTS_REJECTED",
             entity_type="rights_record",
             entity_id=str(record.id),
-            details={"reason": payload.reason},
+            details={"review_reference": record.review_reference, "reviewer_id": reviewer.id},
         )
     )
+    db.add(RightsEvidence(rights_record_id=record.id, evidence_type="HUMAN_REVIEW_REJECTED",
+                          source_url=payload.evidence_url, description=payload.evidence_description))
     db.commit()
     return {"rejected": True, "status": record.status}
 

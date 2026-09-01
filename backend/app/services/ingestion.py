@@ -204,6 +204,7 @@ class IngestionService:
         )
         db.add(rights)
         db.flush()
+        rights.review_reference = f"RIGHTS-{datetime.now(UTC).year}-{rights.id:05d}"
         evidence_path = self._archive_rights_claim(source, source_item, payload)
         db.add(
             RightsEvidence(

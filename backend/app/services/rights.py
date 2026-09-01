@@ -54,6 +54,12 @@ class RightsEngine:
             reasons.append(f"rights status {status.value} is not approved")
         if not record.manual_approval:
             reasons.append("manual rights approval is missing")
+        if getattr(record, "human_review_required", True) and getattr(
+            record, "human_review_status", "PENDING"
+        ) != "APPROVED":
+            reasons.append("human rights review is not approved")
+        if not (getattr(record, "reviewer_id", None) or getattr(record, "verified_by", None)):
+            reasons.append("private human reviewer identity is missing")
         if not record.jurisdiction:
             reasons.append("jurisdiction is missing")
         if not record.verification_method:
@@ -154,6 +160,7 @@ class RightsEngine:
         for record in due_records:
             record.status = RightsStatus.RESEARCHING.value
             record.manual_approval = False
+            record.human_review_status = "PENDING"
             novels = db.scalars(select(Novel).where(Novel.edition_id == record.edition_id)).all()
             for novel in novels:
                 novel.published = False

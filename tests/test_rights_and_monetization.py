@@ -19,6 +19,10 @@ def approved_record(**overrides):
         "id": 1,
         "status": RightsStatus.PUBLIC_DOMAIN_VERIFIED.value,
         "manual_approval": True,
+        "human_review_required": True,
+        "human_review_status": "APPROVED",
+        "reviewer_id": 7,
+        "verified_by": None,
         "jurisdiction": "SG",
         "verification_method": "Independent manual legal and provenance review",
         "verified_at": datetime.now(timezone.utc),
@@ -36,6 +40,24 @@ def test_rights_requires_independent_evidence() -> None:
 
     assert not decision.allowed
     assert "independent rights evidence is missing" in decision.reasons
+
+
+def test_ai_research_never_substitutes_for_human_approval() -> None:
+    record = approved_record(
+        manual_approval=False,
+        human_review_status="PENDING",
+        reviewer_id=None,
+        research_method="AI_ASSISTED_COPYRIGHT_RESEARCH",
+        research_provider="OpenAI",
+        research_completed_at=datetime.now(timezone.utc),
+    )
+
+    decision = RightsEngine().assess_record(ScalarDatabase(1), record)
+
+    assert not decision.allowed
+    assert "manual rights approval is missing" in decision.reasons
+    assert "human rights review is not approved" in decision.reasons
+    assert "private human reviewer identity is missing" in decision.reasons
 
 
 def test_attribution_licence_and_review_date_are_enforced() -> None:

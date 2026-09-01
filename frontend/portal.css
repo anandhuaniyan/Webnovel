@@ -23,6 +23,9 @@ body { min-height:100vh; }
 .metric span { color:var(--muted); font-size:.73rem; text-transform:uppercase; letter-spacing:.08em; }
 .list { display:grid; gap:10px; padding:0; list-style:none; }
 .list li { display:flex; justify-content:space-between; gap:20px; padding:15px 0; border-bottom:1px solid var(--line); }
+.list .rights-review-item { display:grid; justify-content:stretch; gap:8px; }
+.rights-review-item small { color:var(--muted); }
+.rights-review-item textarea { resize:vertical; }
 .badge { align-self:flex-start; padding:4px 9px; border-radius:999px; background:var(--sage); font-size:.68rem; }
 pre { max-height:420px; overflow:auto; padding:18px; color:#e7f0eb; background:var(--ink); border-radius:12px; font-size:.75rem; white-space:pre-wrap; }
 @media (max-width:760px) { .portal-grid,.dashboard { grid-template-columns:1fr; } }

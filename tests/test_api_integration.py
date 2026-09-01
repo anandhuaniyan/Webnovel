@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -8,14 +9,19 @@ from app.models import (
     Author,
     Chapter,
     Edition,
+    ImportJob,
     Novel,
     NovelImage,
     RightsEvidence,
     RightsRecord,
+    RightsReviewer,
+    Source,
+    SourceItem,
     Work,
 )
 from app.services.rights import RightsEngine
 from app.services.search import SearchService
+from app.services.storage import StorageService
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect, update
 from sqlalchemy.orm import Session
@@ -37,6 +43,7 @@ def test_migration_created_required_tables() -> None:
         "genres",
         "sources",
         "rights_records",
+        "rights_reviewers",
         "rights_evidence",
         "import_jobs",
         "quality_issues",
@@ -80,6 +87,115 @@ def test_policies_robots_sitemap_and_admin_boundary(client: TestClient) -> None:
         client.get("/api/admin/dashboard", headers={"X-Admin-Key": "wrong"}).status_code
         == 403
     )
+
+
+def test_private_reviewer_identity_is_admin_only(
+    client: TestClient, db_session: Session
+) -> None:
+    novel = db_session.query(Novel).filter(Novel.published.is_(True)).first()
+    if novel is None:
+        pytest.skip("A published fixture is required for public privacy verification")
+    rights = (
+        db_session.query(RightsRecord)
+        .filter(RightsRecord.edition_id == novel.edition_id)
+        .order_by(RightsRecord.updated_at.desc())
+        .first()
+    )
+    assert rights is not None
+    marker = f"Private Reviewer {uuid4().hex}"
+    reviewer = RightsReviewer(display_name=marker, reviewer_type="EXTERNAL", active=True)
+    db_session.add(reviewer)
+    db_session.flush()
+    rights.reviewer_id = reviewer.id
+    rights.verified_by = marker
+    rights.human_review_status = "APPROVED"
+    rights.reviewer_visibility = "PRIVATE"
+    db_session.flush()
+
+    public_api = client.get(f"/api/novels/{novel.slug}")
+    public_page = client.get(f"/novels/{novel.slug}")
+    novel_sitemap = client.get("/sitemaps/novels-1.xml")
+    sitemap_index = client.get("/sitemap.xml")
+
+    assert public_api.status_code == 200
+    assert public_page.status_code == 200
+    assert marker not in public_api.text
+    assert marker not in public_page.text
+    assert marker not in novel_sitemap.text
+    assert marker not in sitemap_index.text
+    assert "human_reviewer" not in public_api.json().get("rights_summary", {})
+
+    assert client.get(f"/api/admin/rights/{rights.id}").status_code == 403
+    admin = client.get(
+        f"/api/admin/rights/{rights.id}",
+        headers={"X-Admin-Key": get_settings().admin_api_key},
+    )
+    assert admin.status_code == 200
+    assert admin.json()["human_reviewer"]["display_name"] == marker
+
+
+def test_private_human_approval_advances_existing_pipeline_only_after_decision(
+    client: TestClient, db_session: Session, monkeypatch, tmp_path
+) -> None:
+    suffix = uuid4().hex[:10]
+    source = db_session.query(Source).first()
+    assert source is not None
+    author = Author(slug=f"approval-author-{suffix}", name=f"Approval Author {suffix}")
+    db_session.add(author)
+    db_session.flush()
+    work = Work(title=f"Approval Story {suffix}", normalized_title=f"approval story {suffix}",
+                primary_author_id=author.id, original_language="en", content_type="NOVEL")
+    db_session.add(work)
+    db_session.flush()
+    edition = Edition(work_id=work.id, title=work.title, language="en",
+                      completeness_status="UNKNOWN")
+    db_session.add(edition)
+    db_session.flush()
+    novel = Novel(work_id=work.id, edition_id=edition.id, primary_author_id=author.id,
+                  slug=f"approval-story-{suffix}", title=work.title, language="en",
+                  content_type="NOVEL", rights_status="RESEARCHING", published=False)
+    source_item = SourceItem(source_id=source.id, edition_id=edition.id,
+                             external_id=f"approval-{suffix}", source_url="https://example.test/book",
+                             raw_metadata={})
+    db_session.add_all([novel, source_item])
+    db_session.flush()
+    job = ImportJob(source_item_id=source_item.id, novel_id=novel.id,
+                    status="RIGHTS_CHECK", checkpoint="VERIFY_RIGHTS")
+    reviewer = RightsReviewer(display_name=f"Private Approver {suffix}",
+                              reviewer_type="EXTERNAL", active=True)
+    rights = RightsRecord(work_id=work.id, edition_id=edition.id, status="RESEARCHING",
+                          jurisdiction="SG", research_method="AI_ASSISTED_COPYRIGHT_RESEARCH",
+                          research_provider="OpenAI", research_summary="Supporting research only.",
+                          research_completed_at=datetime.now(UTC), human_review_status="PENDING",
+                          manual_approval=False, review_reference=f"RIGHTS-TEST-{suffix}")
+    db_session.add_all([job, reviewer, rights])
+    db_session.flush()
+
+    queued = []
+    monkeypatch.setattr("app.api.admin.process_import.delay",
+                        lambda job_id: queued.append(job_id) or SimpleNamespace(id="pipeline-test"))
+    monkeypatch.setattr(StorageService, "__init__", lambda self: setattr(self, "root", tmp_path))
+    monkeypatch.setattr(StorageService, "safe_path",
+                        lambda self, category, relative: self.root / category / relative)
+
+    response = client.post(
+        f"/api/admin/rights/{rights.id}/approve",
+        headers={"X-Admin-Key": get_settings().admin_api_key},
+        json={"status": "PUBLIC_DOMAIN_VERIFIED", "reviewer_id": reviewer.id,
+              "verification_method": "Independent human copyright and edition review",
+              "evidence_description": "A legitimate human reviewer documented the publication decision.",
+              "review_interval_days": 365},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["pipeline_task_id"] == "pipeline-test"
+    db_session.refresh(job)
+    db_session.refresh(rights)
+    assert job.status == "RIGHTS_APPROVED"
+    assert rights.human_review_status == "APPROVED"
+    assert rights.reviewer_id == reviewer.id
+    assert rights.verified_by is None
+    assert queued == [job.id]
 
 
 def test_authentication_and_account_boundary(client: TestClient) -> None:
@@ -338,6 +454,8 @@ def test_synthetic_full_publication_search_and_rights_recheck(
         verified_at=datetime.now(UTC),
         next_review_at=datetime.now(UTC) + timedelta(days=365),
         manual_approval=True,
+        human_review_status="APPROVED",
+        reviewer_visibility="PRIVATE",
     )
     db_session.add(rights)
     db_session.flush()

@@ -189,10 +189,14 @@ Index(
 
 class NovelVisualProfile(TimestampMixin, Base):
     __tablename__ = "novel_visual_profiles"
+    __table_args__ = (
+        UniqueConstraint("novel_id", name="novel_visual_profiles_novel_id_key"),
+        Index("ix_novel_visual_profiles_novel_id", "novel_id", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     novel_id: Mapped[int] = mapped_column(
-        ForeignKey("novels.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey("novels.id", ondelete="CASCADE")
     )
     historical_period: Mapped[str | None] = mapped_column(String(255))
     environments: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
@@ -310,8 +314,35 @@ class SourceItem(TimestampMixin, Base):
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RightsReviewer(TimestampMixin, Base):
+    """Private administrator/auditor identity used only by rights workflows."""
+
+    __tablename__ = "rights_reviewers"
+    __table_args__ = (
+        CheckConstraint(
+            "reviewer_type IN ('INTERNAL', 'EXTERNAL')",
+            name="ck_rights_reviewers_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255))
+    reviewer_type: Mapped[str] = mapped_column(String(40), default="INTERNAL", nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class RightsRecord(TimestampMixin, Base):
     __tablename__ = "rights_records"
+    __table_args__ = (
+        CheckConstraint(
+            "human_review_status IN ('PENDING', 'APPROVED', 'NEEDS_LEGAL_REVIEW', 'REJECTED')",
+            name="ck_rights_records_human_review_status",
+        ),
+        CheckConstraint(
+            "reviewer_visibility = 'PRIVATE'",
+            name="ck_rights_records_reviewer_visibility",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     work_id: Mapped[int] = mapped_column(ForeignKey("works.id", ondelete="CASCADE"), index=True)
@@ -322,7 +353,20 @@ class RightsRecord(TimestampMixin, Base):
     licence_version: Mapped[str | None] = mapped_column(String(80))
     licence_url: Mapped[str | None] = mapped_column(String(1500))
     attribution_text: Mapped[str | None] = mapped_column(Text)
+    research_method: Mapped[str | None] = mapped_column(String(120))
+    research_provider: Mapped[str | None] = mapped_column(String(120))
+    research_summary: Mapped[str | None] = mapped_column(Text)
+    research_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    human_review_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    human_review_status: Mapped[str] = mapped_column(String(40), default="PENDING", nullable=False)
+    reviewer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rights_reviewers.id", ondelete="RESTRICT"), index=True
+    )
+    review_reference: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
+    reviewer_visibility: Mapped[str] = mapped_column(String(20), default="PRIVATE", nullable=False)
     verification_method: Mapped[str | None] = mapped_column(String(255))
+    # Historical private audit field. New approvals use reviewer_id and never
+    # expose either value through a public serializer.
     verified_by: Mapped[str | None] = mapped_column(String(255))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -404,6 +448,7 @@ class ChapterImage(TimestampMixin, Base):
             "placement_order",
             name="uq_chapter_images_placement",
         ),
+        Index("ix_chapter_images_approved", "approved"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

@@ -364,12 +364,16 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
         )
         if value
     )
-    rights_status = html.escape(rights.status if rights else novel.rights_status)
+    raw_rights_status = rights.status if rights else novel.rights_status
+    rights_status = "Public Domain Verified" if raw_rights_status == "PUBLIC_DOMAIN_VERIFIED" else raw_rights_status.replace("_", " ").title()
+    rights_status = html.escape(rights_status)
     rights_details = []
     if rights and rights.licence_name:
         rights_details.append(f"Licence: {html.escape(rights.licence_name)}")
     if rights and rights.jurisdiction:
         rights_details.append(f"Jurisdiction reviewed: {html.escape(rights.jurisdiction)}")
+    if rights and rights.verified_at:
+        rights_details.append(f"Last reviewed: {rights.verified_at.date().isoformat()}")
     if source_item and source:
         rights_details.append(
             f'Source edition: <a rel="nofollow noopener" href="{html.escape(source_item.source_url, quote=True)}">{html.escape(source.name)}</a>'
@@ -379,7 +383,7 @@ def novel_page(slug: str, db: Session = Depends(get_db)) -> HTMLResponse:
     rating_text = f"{novel.average_rating} / 5 ({novel.rating_count:,})" if novel.rating_count else "Not yet rated"
     body = f"""<main class="book-page" data-novel-page data-novel-id="{novel.id}"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <span>{html.escape(novel.title)}</span></nav>
 <section class="book-hero">{cover_markup}<div><p class="eyebrow">Complete · Rights reviewed</p><h1>{html.escape(novel.title)}</h1><p class="byline">by {author_markup}</p><div class="pills">{genre_markup}</div><p>{html.escape(description)}</p><dl class="facts"><div><dt>Chapters</dt><dd>{novel.chapter_count:,}</dd></div><div><dt>Words</dt><dd>{novel.total_words:,}</dd></div><div><dt>Reading time</dt><dd>{novel.estimated_reading_minutes:,} min</dd></div><div><dt>Language</dt><dd>{html.escape(novel.language.upper())}</dd></div><div><dt>First published</dt><dd>{publication_year or "Unknown"}</dd></div><div><dt>Reader rating</dt><dd>{html.escape(rating_text)}</dd></div></dl><div class="book-actions"><a class="primary-action" id="novel-reading-action" href="{html.escape(first_link)}">Start reading</a><button class="secondary-action" id="novel-library-action" type="button">Add to library</button></div><p class="reader-status" id="novel-action-status" aria-live="polite"></p></div></section>
-<div class="book-columns"><div>{enhancements}<section class="rights"><h2>Copyright and source</h2><p><strong>{rights_status}</strong> · {rights_markup}</p><p>The selected edition passed manual, jurisdiction-specific review. Source availability alone is never treated as permission.</p></section></div>
+<div class="book-columns"><div>{enhancements}<section class="rights"><h2>Copyright and source</h2><p><strong>{rights_status}</strong> · {rights_markup}</p><p>This work was reviewed under our rights-verification process for publication in the applicable jurisdiction. Reviewer identity is retained privately for audit purposes. Source availability alone is never treated as permission.</p></section></div>
 <section><h2>Contents</h2><ol class="chapter-list">{chapter_markup}</ol></section></div>{related_markup}</main>"""
     structured = {
         "@context": "https://schema.org",
