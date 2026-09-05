@@ -15,7 +15,9 @@ class QualityFinding:
 
 
 class CompletenessService:
-    def inspect(self, chapters: list[ExtractedChapter]) -> tuple[str, list[QualityFinding]]:
+    def inspect(
+        self, chapters: list[ExtractedChapter], *, structural_end_confirmed: bool = False
+    ) -> tuple[str, list[QualityFinding]]:
         findings: list[QualityFinding] = []
         if not chapters:
             return "INCOMPLETE", [QualityFinding("NO_CHAPTERS", "ERROR", "No chapters were extracted")]
@@ -36,7 +38,10 @@ class CompletenessService:
         if ocr_noise > 0.02:
             findings.append(QualityFinding("OCR_CORRUPTION", "WARNING", "Text may contain OCR corruption"))
         ending = chapters[-1].content_text[-1000:].lower()
-        ending_signal = bool(re.search(r"\b(?:the\s+end|finis)\b|end of the project gutenberg", ending))
+        ending_signal = bool(
+            structural_end_confirmed
+            or re.search(r"\b(?:the\s+end|finis)\b|end of the project gutenberg", ending)
+        )
         if len(combined.split()) < 3_000:
             findings.append(QualityFinding("TOO_SHORT", "WARNING", "Work is unusually short for a novel"))
         blocking = [finding for finding in findings if finding.blocking and finding.severity == "ERROR"]

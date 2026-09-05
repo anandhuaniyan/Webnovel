@@ -26,6 +26,16 @@ def test_missing_ending_fails_closed() -> None:
     )
 
 
+def test_verified_source_container_can_confirm_natural_literary_ending() -> None:
+    text = "Chapter 1\n\n" + ("A complete narrative sentence. " * 700)
+    status, findings = CompletenessService().inspect(
+        ChapterExtractionService().extract_text(text), structural_end_confirmed=True
+    )
+
+    assert status == "COMPLETE"
+    assert not any(finding.code == "ENDING_UNCONFIRMED" for finding in findings)
+
+
 def test_duplicate_and_normalization_fingerprints_are_stable() -> None:
     assert (
         normalize_text("  The Count\u2014of Mont\u00e9 Cristo! ")

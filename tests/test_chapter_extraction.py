@@ -79,3 +79,33 @@ def test_epub_splits_embedded_chapters_and_drops_gutenberg_boilerplate(tmp_path:
     assert all("Gutenberg" not in chapter.content_text for chapter in chapters)
     assert all("{2}" not in chapter.content_text for chapter in chapters)
     assert all("Decorative plate" not in chapter.content_text for chapter in chapters)
+
+
+def test_epub_supports_staves_bare_roman_parts_and_spine_titled_chapters(tmp_path: Path) -> None:
+    book = epub.EpubBook()
+    book.set_identifier("period-fiction")
+    book.set_title("Period Fiction")
+    book.set_language("en")
+    embedded = epub.EpubHtml(title="Embedded", file_name="embedded.xhtml", lang="en")
+    embedded.content = "<h2>STAVE ONE.</h2><p>" + ("Winter words. " * 120) + "</p><h2>STAVE TWO.</h2><p>" + ("Morning words. " * 120) + "</p>"
+    roman = epub.EpubHtml(title="Part", file_name="part.xhtml", lang="en")
+    roman.content = "<h1>III</h1><p>" + ("River words. " * 120) + "</p>"
+    titled = epub.EpubHtml(title="Door", file_name="door.xhtml", lang="en")
+    titled.content = "<h1>STORY OF THE DOOR</h1><p>" + ("Street words. " * 120) + "</p>"
+    licence = epub.EpubHtml(title="Licence", file_name="license.xhtml", lang="en")
+    licence.content = "<h1>THE FULL PROJECT GUTENBERG LICENSE</h1><p>" + ("Licence words. " * 600) + "</p>"
+    for item in (embedded, roman, titled, licence):
+        book.add_item(item)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", embedded, roman, titled, licence]
+    target = tmp_path / "period-fiction.epub"
+    epub.write_epub(str(target), book)
+
+    chapters = ChapterExtractionService().extract_epub(target)
+
+    assert [chapter.title for chapter in chapters] == [
+        "STAVE ONE.", "STAVE TWO.", "III", "STORY OF THE DOOR"
+    ]
+    assert ChapterExtractionService.has_structural_ending(target)
+    assert all("LICENSE" not in chapter.content_text for chapter in chapters)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -22,12 +22,17 @@ from app.core.enums import (
 from app.core.security import require_admin_key
 from app.models import (
     AuditLog,
+    Author,
     Chapter,
     ChapterImage,
     ContactRequest,
+    Edition,
+    Genre,
     ImportJob,
     Novel,
+    NovelGenre,
     NovelImage,
+    NovelVisualProfile,
     QualityIssue,
     Review,
     RightsEvidence,
@@ -122,6 +127,29 @@ class ModerationAction(BaseModel):
 class ArtworkGenerationAction(BaseModel):
     reason: str = Field(min_length=5, max_length=2000)
     chapter_limit: int = Field(default=100, ge=1, le=500)
+
+
+class GroundedMetadataUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    alternative_title: str | None = Field(default=None, max_length=500)
+    description: str = Field(min_length=40, max_length=5000)
+    synopsis: str = Field(min_length=40, max_length=5000)
+    themes: str = Field(min_length=10, max_length=2000)
+    setting: str = Field(min_length=10, max_length=2000)
+    character_guide: str = Field(min_length=20, max_length=5000)
+    literary_context: str = Field(min_length=20, max_length=5000)
+    reading_difficulty: str = Field(min_length=3, max_length=40)
+    first_publication_year: int = Field(ge=1400, le=2100)
+    author_birth_date: date
+    author_death_date: date
+    genres: list[str] = Field(min_length=1, max_length=5)
+    source_hashes: list[str] = Field(min_length=1, max_length=20)
+    historical_period: str = Field(min_length=3, max_length=255)
+    environments: list[str] = Field(min_length=1, max_length=20)
+    recurring_characters: list[dict] = Field(default_factory=list, max_length=30)
+    atmosphere: str = Field(min_length=3, max_length=500)
+    color_palette: list[str] = Field(min_length=1, max_length=20)
+    visual_motifs: list[str] = Field(default_factory=list, max_length=30)
 
 
 def _service_status() -> dict:
@@ -791,6 +819,77 @@ def generate_novel_artwork(
     db.commit()
     task = generate_novel_artwork_task.delay(novel.id, payload.chapter_limit)
     return {"novel_id": novel.id, "task_id": task.id, "approval_required": True}
+
+
+@router.post("/novels/{novel_id}/grounded-metadata")
+def apply_grounded_metadata(
+    novel_id: int, payload: GroundedMetadataUpdate, db: Session = Depends(get_db)
+) -> dict:
+    novel = db.get(Novel, novel_id)
+    if not novel:
+        raise HTTPException(status_code=404, detail="Novel not found")
+    canonical_hashes = set(
+        db.scalars(select(Chapter.content_hash).where(Chapter.novel_id == novel.id)).all()
+    )
+    supplied_hashes = set(payload.source_hashes)
+    if not supplied_hashes or not supplied_hashes <= canonical_hashes:
+        raise HTTPException(
+            status_code=400,
+            detail="Grounded metadata must cite hashes from this novel's canonical chapters",
+        )
+    author = db.get(Author, novel.primary_author_id) if novel.primary_author_id else None
+    work = db.get(Work, novel.work_id)
+    if not author or not work:
+        raise HTTPException(status_code=409, detail="Novel author or work record is missing")
+    genre_rows = db.scalars(select(Genre).where(Genre.name.in_(payload.genres))).all()
+    if {genre.name for genre in genre_rows} != set(payload.genres):
+        raise HTTPException(status_code=400, detail="One or more genres are not configured")
+
+    novel.description = payload.description
+    novel.title = payload.title
+    novel.alternative_title = payload.alternative_title
+    novel.ai_synopsis = payload.synopsis
+    novel.themes = payload.themes
+    novel.setting = payload.setting
+    novel.character_guide = payload.character_guide
+    novel.literary_context = payload.literary_context
+    novel.reading_difficulty = payload.reading_difficulty
+    novel.illustration_mode = "ALL_CHAPTERS"
+    novel.seo_title = f"{novel.title} — Complete text"
+    novel.seo_description = payload.description[:320]
+    author.birth_date = payload.author_birth_date
+    author.death_date = payload.author_death_date
+    author.death_year = payload.author_death_date.year
+    author.verified = True
+    work.title = payload.title
+    work.first_publication_year = payload.first_publication_year
+    edition = db.get(Edition, novel.edition_id)
+    if edition:
+        edition.title = payload.title
+    db.query(NovelGenre).filter(NovelGenre.novel_id == novel.id).delete()
+    for index, genre in enumerate(genre_rows):
+        db.add(NovelGenre(novel_id=novel.id, genre_id=genre.id, is_primary=index == 0))
+    profile = db.scalar(
+        select(NovelVisualProfile).where(NovelVisualProfile.novel_id == novel.id)
+    ) or NovelVisualProfile(novel_id=novel.id)
+    profile.historical_period = payload.historical_period
+    profile.environments = payload.environments
+    profile.recurring_characters = payload.recurring_characters
+    profile.atmosphere = payload.atmosphere
+    profile.color_palette = payload.color_palette
+    profile.visual_motifs = payload.visual_motifs
+    db.add(profile)
+    db.add(
+        AuditLog(
+            actor_type="ADMIN_KEY",
+            action="GROUNDED_METADATA_APPLIED",
+            entity_type="novel",
+            entity_id=str(novel.id),
+            details={"source_hashes": sorted(supplied_hashes), "genres": payload.genres},
+        )
+    )
+    db.commit()
+    return {"novel_id": novel.id, "metadata": "APPLIED", "source_hashes": len(supplied_hashes)}
 
 
 @router.post("/chapter-images/{image_id}/moderate")

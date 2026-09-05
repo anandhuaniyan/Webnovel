@@ -9,23 +9,24 @@ from pathlib import Path
 
 import ebooklib
 import nh3
-from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
+from bs4 import BeautifulSoup, Comment, XMLParsedAsHTMLWarning
 from ebooklib import epub
 from slugify import slugify
 
 CHAPTER_HEADING = re.compile(
-    r"^\s*(?:(?:chapter|book|part|volume|letter|act)\s*"
+    r"^\s*(?:(?:chapter|book|part|volume|letter|act|stave)\s*"
     r"(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third)"
     r"(?:\s*[:.\-–—]\s*.*)?|prologue|epilogue|preface|introduction)\s*$",
     re.IGNORECASE,
 )
 TRAILING_CHAPTER_HEADING = re.compile(
-    r"(?P<title>(?:(?:chapter|book|part|volume|letter|act)\s*"
+    r"(?P<title>(?:(?:chapter|book|part|volume|letter|act|stave)\s*"
     r"(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third)"
     r"(?:\s*[:.\-–—]\s*[^\n]{0,120})?|prologue|epilogue))\s*[.:]?\s*$",
     re.IGNORECASE,
 )
 NUMBERED_SECTION_HEADING = re.compile(r"^\s*(?:\d+|[ivxlcdm]+)[.:\-–—]\s+\S.{0,150}$", re.IGNORECASE)
+BARE_ROMAN_HEADING = re.compile(r"^\s*[ivxlcdm]+\s*$", re.IGNORECASE)
 NON_CONTENT_DOCUMENT = re.compile(r"(?:^|[/_.-])(?:cover|nav|toc|wrap\d*|colophon)(?:[/_.-]|$)", re.IGNORECASE)
 
 
@@ -76,15 +77,48 @@ class ChapterExtractionService:
             ):
                 boilerplate.decompose()
             body = soup.body or soup
-            if len(body.get_text(" ", strip=True).split()) < 20:
+            body_text = body.get_text(" ", strip=True)
+            word_count = len(body_text.split())
+            if word_count < 20 or "THE FULL PROJECT GUTENBERG" in body_text.upper():
                 continue
-            chapters.extend(self.extract_html(str(body), require_chapter_heading=True))
+            extracted = self.extract_html(str(body), require_chapter_heading=True)
+            if not extracted and word_count >= 200:
+                first_heading = body.find(["h1", "h2", "h3", "h4"])
+                title = " ".join(first_heading.get_text(" ", strip=True).split()) if first_heading else ""
+                lowered = title.casefold()
+                if title and lowered not in {"contents", "table of contents"} and "project gutenberg" not in lowered:
+                    extracted = [self._build(1, title, str(body), item.get_content())]
+            chapters.extend(extracted)
 
         reordered = [
             ExtractedChapter(**{**chapter.__dict__, "order": order})
             for order, chapter in enumerate(chapters, start=1)
         ]
         return self._ensure_unique_slugs(reordered)
+
+    @staticmethod
+    def has_structural_ending(path: Path) -> bool:
+        """Confirm a complete Gutenberg EPUB container without exposing its boilerplate.
+
+        A Gutenberg licence document appearing after substantial narrative spine
+        content is an edition-level end boundary. It supplements, but never
+        replaces, chapter/content quality checks.
+        """
+        if path.suffix.lower() != ".epub":
+            return False
+        book = epub.read_epub(str(path))
+        narrative_words = 0
+        for idref, _linear in book.spine:
+            item = book.get_item_with_id(idref)
+            if not item or item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+                text = BeautifulSoup(item.get_content(), "lxml").get_text(" ", strip=True)
+            if "THE FULL PROJECT GUTENBERG" in text.upper():
+                return narrative_words >= 500
+            narrative_words += len(text.split())
+        return False
 
     def extract_html(self, html: str, *, require_chapter_heading: bool = False) -> list[ExtractedChapter]:
         soup = BeautifulSoup(html, "lxml")
@@ -93,33 +127,23 @@ class ChapterExtractionService:
         for heading in soup.find_all(["h1", "h2", "h3", "h4"]):
             title = self._chapter_title(heading.get_text(" ", strip=True))
             if title:
-                boundary = heading
-                while isinstance(boundary.parent, Tag) and boundary.parent is not body:
-                    boundary = boundary.parent
-                headings.append((boundary, title))
+                headings.append((heading, title))
         if not headings:
             if require_chapter_heading:
                 return []
             return [self._build(1, "Full Text", str(body), html.encode("utf-8"))]
 
+        marker_prefix = "WEBNOVEL_CHAPTER_BOUNDARY_"
+        for index, (heading, _title) in enumerate(headings):
+            heading.insert_before(Comment(f"{marker_prefix}{index}"))
+        chunks = re.split(rf"<!--{marker_prefix}(\d+)-->", str(body))
+        content_by_index = {
+            int(chunks[index]): chunks[index + 1]
+            for index in range(1, len(chunks) - 1, 2)
+        }
         result: list[ExtractedChapter] = []
-        boundary_tags = {id(boundary) for boundary, _title in headings}
-        for order, (boundary, title) in enumerate(headings, start=1):
-            parts: list[str] = [str(boundary)]
-            for sibling in boundary.next_siblings:
-                if isinstance(sibling, Tag) and id(sibling) in boundary_tags:
-                    break
-                if (
-                    isinstance(sibling, Tag)
-                    and sibling.find(["h1", "h2", "h3", "h4"])
-                    and any(
-                        self._chapter_title(candidate.get_text(" ", strip=True))
-                        for candidate in sibling.find_all(["h1", "h2", "h3", "h4"])
-                    )
-                ):
-                    break
-                parts.append(str(sibling))
-            content = "".join(parts)
+        for order, (_heading, title) in enumerate(headings, start=1):
+            content = content_by_index[order - 1]
             result.append(self._build(order, title, content, content.encode()))
         return self._ensure_unique_slugs(result)
 
@@ -145,7 +169,11 @@ class ChapterExtractionService:
         compact = " ".join(title.split())
         if not compact or len(compact) > 320:
             return None
-        if CHAPTER_HEADING.match(compact) or NUMBERED_SECTION_HEADING.match(compact):
+        if (
+            CHAPTER_HEADING.match(compact)
+            or NUMBERED_SECTION_HEADING.match(compact)
+            or BARE_ROMAN_HEADING.match(compact)
+        ):
             candidate = compact
         else:
             trailing = TRAILING_CHAPTER_HEADING.search(compact)
@@ -153,7 +181,7 @@ class ChapterExtractionService:
                 return None
             candidate = trailing.group("title")
         return re.sub(
-            r"^(chapter|book|part|volume|letter|act)(?=[\divxlcdm])",
+            r"^(chapter|book|part|volume|letter|act|stave)(?=[\divxlcdm])",
             r"\1 ",
             candidate,
             flags=re.IGNORECASE,

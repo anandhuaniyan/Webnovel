@@ -296,7 +296,20 @@ class IngestionService:
             )
             for chapter in rows
         ]
-        status, findings = self.quality.inspect(extracted)
+        source_item = db.get(SourceItem, job.source_item_id)
+        source_path = (
+            (self.settings.project_root / source_item.archived_path).resolve()
+            if source_item and source_item.archived_path
+            else None
+        )
+        status, findings = self.quality.inspect(
+            extracted,
+            structural_end_confirmed=(
+                bool(source_path)
+                and source_path.is_file()
+                and self.extractor.has_structural_ending(source_path)
+            ),
+        )
         novel.completeness_status = status
         edition = db.get(Edition, novel.edition_id)
         edition.completeness_status = status

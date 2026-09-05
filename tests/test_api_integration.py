@@ -9,9 +9,12 @@ from app.models import (
     Author,
     Chapter,
     Edition,
+    Genre,
     ImportJob,
     Novel,
+    NovelGenre,
     NovelImage,
+    NovelVisualProfile,
     RightsEvidence,
     RightsRecord,
     RightsReviewer,
@@ -87,6 +90,72 @@ def test_policies_robots_sitemap_and_admin_boundary(client: TestClient) -> None:
         client.get("/api/admin/dashboard", headers={"X-Admin-Key": "wrong"}).status_code
         == 403
     )
+
+
+def test_grounded_metadata_requires_canonical_hashes_and_updates_novel(
+    client: TestClient, db_session: Session
+) -> None:
+    novel = (
+        db_session.query(Novel)
+        .join(Chapter, Chapter.novel_id == Novel.id)
+        .filter(Novel.primary_author_id.is_not(None))
+        .first()
+    )
+    assert novel is not None
+    chapter = db_session.query(Chapter).filter(Chapter.novel_id == novel.id).first()
+    genre = db_session.query(Genre).first()
+    assert chapter is not None
+    assert genre is not None
+    payload = {
+        "title": "Grounded Integration Title",
+        "alternative_title": "A Verified Alternative Title",
+        "description": "A grounded description derived only from the cited canonical chapter text.",
+        "synopsis": "A grounded synopsis derived only from the cited canonical chapter text.",
+        "themes": "Identity, consequence, and moral choice",
+        "setting": "A historically grounded city and its surrounding landscape",
+        "character_guide": "The protagonist and supporting characters are described from the canonical text.",
+        "literary_context": "This record supplies concise historical and literary context for readers.",
+        "reading_difficulty": "Intermediate",
+        "first_publication_year": 1895,
+        "author_birth_date": "1850-01-01",
+        "author_death_date": "1894-12-31",
+        "genres": [genre.name],
+        "source_hashes": ["0" * 64],
+        "historical_period": "Late nineteenth century",
+        "environments": ["city streets", "private rooms"],
+        "recurring_characters": [{"name": "The protagonist", "role": "central figure"}],
+        "atmosphere": "Tense, reflective, and atmospheric",
+        "color_palette": ["charcoal", "amber"],
+        "visual_motifs": ["fog", "lamplight"],
+    }
+    headers = {"X-Admin-Key": get_settings().admin_api_key}
+
+    rejected = client.post(
+        f"/api/admin/novels/{novel.id}/grounded-metadata",
+        headers=headers,
+        json=payload,
+    )
+    assert rejected.status_code == 400
+
+    payload["source_hashes"] = [chapter.content_hash]
+    applied = client.post(
+        f"/api/admin/novels/{novel.id}/grounded-metadata",
+        headers=headers,
+        json=payload,
+    )
+    assert applied.status_code == 200
+    assert applied.json() == {
+        "novel_id": novel.id,
+        "metadata": "APPLIED",
+        "source_hashes": 1,
+    }
+    db_session.refresh(novel)
+    assert novel.title == payload["title"]
+    assert novel.description == payload["description"]
+    assert novel.illustration_mode == "ALL_CHAPTERS"
+    assert db_session.query(NovelGenre).filter_by(novel_id=novel.id).count() == 1
+    profile = db_session.query(NovelVisualProfile).filter_by(novel_id=novel.id).one()
+    assert profile.color_palette == payload["color_palette"]
 
 
 def test_private_reviewer_identity_is_admin_only(

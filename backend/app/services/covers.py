@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
@@ -34,6 +35,20 @@ class DisabledCoverProvider:
         raise RuntimeError(
             "AI cover generation is disabled. Configure WEBNOVEL_AI_IMAGE_PROVIDER with an approved provider."
         )
+
+
+class ExistingFileCoverProvider:
+    """Import an original image generated outside the worker container."""
+
+    def __init__(self, source_path: Path):
+        self.source_path = source_path.resolve()
+
+    def generate(self, brief: CoverBrief, output_path: Path) -> Path:
+        if not self.source_path.is_file():
+            raise FileNotFoundError(f"cover source does not exist: {self.source_path}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.source_path, output_path)
+        return output_path
 
 
 class HttpCoverProvider:
